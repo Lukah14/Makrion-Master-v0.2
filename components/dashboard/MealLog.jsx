@@ -1,0 +1,357 @@
+import { useState } from 'react';
+import { View, Text, Image, TouchableOpacity, Modal, Pressable, StyleSheet } from 'react-native';
+import { Plus, Flame, Trash2, Pencil } from 'lucide-react-native';
+import { useTheme } from '@/context/ThemeContext';
+
+const ICON_MORE = require('@/src/Icons/More.png');
+
+function MacroStat({ label, value, color }) {
+  const { colors: Colors } = useTheme();
+  const s = createS(Colors);
+
+  return (
+    <View style={s.macroStat}>
+      <Text style={[s.macroValue, color && { color }]}>{value}</Text>
+      <Text style={s.macroLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function FoodRow({ item, onRemove }) {
+  const { colors: Colors } = useTheme();
+  const s = createS(Colors);
+
+  return (
+    <View style={s.foodRow}>
+      <View style={s.foodLeft}>
+        <Text style={s.foodName} numberOfLines={1}>{item.name}</Text>
+        <Text style={s.foodAmount}>{item.amount}</Text>
+      </View>
+      <View style={s.foodRight}>
+        <View style={s.foodMacroRow}>
+          <Text style={s.foodCalText}>{item.calories}</Text>
+          <Text style={s.foodMacroText}>
+            <Text style={s.pLabel}>P</Text>
+            <Text style={s.pVal}>{item.protein} </Text>
+            <Text style={s.cLabel}>C</Text>
+            <Text style={s.cVal}>{item.carbs} </Text>
+            <Text style={s.fLabel}>F</Text>
+            <Text style={s.fVal}>{item.fat}</Text>
+          </Text>
+        </View>
+        <TouchableOpacity onPress={() => onRemove && onRemove(item.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} activeOpacity={0.7}>
+          <Trash2 size={13} color={Colors.textTertiary} />
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+function MealOverflowMenu({ visible, onClose, onAddFood, onClearMeal, onEditMeal, mealName }) {
+  const { colors: Colors } = useTheme();
+  const s = createS(Colors);
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={s.menuOverlay} onPress={onClose}>
+        <Pressable style={s.menuBox} onPress={() => {}}>
+          <Text style={s.menuTitle}>{mealName || 'Meal'}</Text>
+          <View style={s.menuDivider} />
+          <TouchableOpacity style={s.menuItem} onPress={onAddFood} activeOpacity={0.7}>
+            <Plus size={15} color={Colors.textPrimary} />
+            <Text style={s.menuText}>Add food</Text>
+          </TouchableOpacity>
+          <View style={s.menuDivider} />
+          <TouchableOpacity style={s.menuItem} onPress={onEditMeal} activeOpacity={0.7}>
+            <Pencil size={15} color={Colors.textPrimary} />
+            <Text style={s.menuText}>Edit meal</Text>
+          </TouchableOpacity>
+          <View style={s.menuDivider} />
+          <TouchableOpacity style={s.menuItem} onPress={onClearMeal} activeOpacity={0.7}>
+            <Trash2 size={15} color='#FF5555' />
+            <Text style={[s.menuText, { color: '#FF5555' }]}>Clear meal</Text>
+          </TouchableOpacity>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+function MealCard({ meal, onAddFood }) {
+  const { colors: Colors } = useTheme();
+  const s = createS(Colors);
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [items, setItems] = useState(meal.items || []);
+
+  const totalCal = items.reduce((a, i) => a + (i.calories || 0), meal.items.length > 0 ? 0 : meal.totalCalories);
+  const calcFromItems = items.length > 0;
+  const protein = calcFromItems ? items.reduce((a, i) => a + (i.protein || 0), 0) : (meal.macros?.protein || 0);
+  const carbs = calcFromItems ? items.reduce((a, i) => a + (i.carbs || 0), 0) : (meal.macros?.carbs || 0);
+  const fat = calcFromItems ? items.reduce((a, i) => a + (i.fat || 0), 0) : (meal.macros?.fat || 0);
+  const displayCal = calcFromItems ? totalCal : meal.totalCalories;
+
+  const removeItem = (id) => setItems((prev) => prev.filter((i) => i.id !== id));
+  const clearMeal = () => setItems([]);
+
+  return (
+    <View style={s.card}>
+      <View style={s.cardInner}>
+        <View style={s.headerRow}>
+          <View style={s.headerLeft}>
+            <Text style={s.mealTitle}>{meal.type}</Text>
+            <View style={s.calRow}>
+              <Flame size={13} color='#F5A623' />
+              <Text style={s.calText}>{displayCal} kcal</Text>
+              <Text style={s.dot}> • </Text>
+              <Text style={s.macroInline}>
+                <Text style={s.pLabel}>{protein}P</Text>
+                <Text style={s.sep}> | </Text>
+                <Text style={s.cLabel}>{carbs}C</Text>
+                <Text style={s.sep}> | </Text>
+                <Text style={s.fLabel}>{fat}F</Text>
+              </Text>
+            </View>
+          </View>
+          <TouchableOpacity
+            style={s.dotsBtn}
+            onPress={() => setMenuVisible(true)}
+            activeOpacity={0.7}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Image source={ICON_MORE} style={s.moreIcon} resizeMode="contain" />
+          </TouchableOpacity>
+        </View>
+
+        {items.length > 0 && (
+          <View style={s.foodList}>
+            {items.map((item, idx) => (
+              <View key={item.id}>
+                {idx > 0 && <View style={s.foodDivider} />}
+                <FoodRow item={item} onRemove={removeItem} />
+              </View>
+            ))}
+          </View>
+        )}
+
+        <TouchableOpacity
+          style={s.addArea}
+          onPress={() => onAddFood && onAddFood(meal)}
+          activeOpacity={0.6}
+        >
+          <Plus size={22} color={Colors.textPrimary} strokeWidth={2} />
+        </TouchableOpacity>
+      </View>
+
+      <MealOverflowMenu
+        visible={menuVisible}
+        mealName={meal.type}
+        onClose={() => setMenuVisible(false)}
+        onAddFood={() => { setMenuVisible(false); onAddFood && onAddFood(meal); }}
+        onClearMeal={() => { setMenuVisible(false); clearMeal(); }}
+        onEditMeal={() => setMenuVisible(false)}
+      />
+    </View>
+  );
+}
+
+export default function MealLog({ meals, onAddFood }) {
+  const { colors: Colors } = useTheme();
+  const s = createS(Colors);
+
+  return (
+    <View style={s.container}>
+      {meals.map((meal) => (
+        <MealCard key={meal.id} meal={meal} onAddFood={onAddFood} />
+      ))}
+    </View>
+  );
+}
+
+const createS = (Colors) => StyleSheet.create({
+  container: {
+    gap: 14,
+    paddingBottom: 8,
+  },
+  card: {
+    borderRadius: 24,
+    backgroundColor: Colors.cardBackground,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  cardInner: {
+    padding: 20,
+    gap: 14,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  headerLeft: {
+    flex: 1,
+    gap: 6,
+  },
+  mealTitle: {
+    fontSize: 24,
+    fontFamily: 'PlusJakartaSans-Bold',
+    color: Colors.textPrimary,
+    letterSpacing: -0.4,
+  },
+  calRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  calText: {
+    fontSize: 14,
+    fontFamily: 'PlusJakartaSans-SemiBold',
+    color: Colors.textPrimary,
+  },
+  dot: {
+    fontSize: 14,
+    color: Colors.textTertiary,
+  },
+  macroInline: {
+    fontSize: 14,
+    fontFamily: 'PlusJakartaSans-SemiBold',
+    color: Colors.textSecondary,
+  },
+  sep: {
+    color: Colors.textTertiary,
+  },
+  pLabel: { color: '#E05252' },
+  cLabel: { color: '#D4900A' },
+  fLabel: { color: '#3A85C8' },
+  dotsBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.innerCard,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 8,
+  },
+  moreIcon: {
+    width: 20,
+    height: 20,
+    tintColor: Colors.textSecondary,
+  },
+  foodList: {
+    backgroundColor: Colors.innerCard,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    overflow: 'hidden',
+  },
+  foodRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    gap: 8,
+  },
+  foodDivider: {
+    height: 1,
+    backgroundColor: Colors.divider,
+  },
+  foodLeft: {
+    flex: 1,
+  },
+  foodName: {
+    fontSize: 14,
+    fontFamily: 'PlusJakartaSans-SemiBold',
+    color: Colors.textPrimary,
+    marginBottom: 2,
+  },
+  foodAmount: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+  },
+  foodRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  foodMacroRow: {
+    alignItems: 'flex-end',
+  },
+  foodCalText: {
+    fontSize: 14,
+    fontFamily: 'PlusJakartaSans-Bold',
+    color: Colors.textPrimary,
+  },
+  foodMacroText: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    marginTop: 1,
+  },
+  pVal: { color: '#E05252' },
+  cVal: { color: '#D4900A' },
+  fVal: { color: '#3A85C8' },
+  addArea: {
+    backgroundColor: Colors.innerCard,
+    borderRadius: 16,
+    paddingVertical: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: Colors.innerBorder,
+  },
+  menuOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  menuBox: {
+    width: '100%',
+    backgroundColor: Colors.cardBackground,
+    borderRadius: 20,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  menuTitle: {
+    fontSize: 16,
+    fontFamily: 'PlusJakartaSans-Bold',
+    color: Colors.textPrimary,
+    padding: 16,
+  },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  menuDivider: {
+    height: 1,
+    backgroundColor: Colors.border,
+  },
+  menuText: {
+    fontSize: 14,
+    fontFamily: 'PlusJakartaSans-SemiBold',
+    color: Colors.textPrimary,
+  },
+  macroStat: {
+    alignItems: 'center',
+  },
+  macroValue: {
+    fontSize: 16,
+    fontFamily: 'PlusJakartaSans-Bold',
+    color: Colors.textPrimary,
+  },
+  macroLabel: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+});

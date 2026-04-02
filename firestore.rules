@@ -1,0 +1,96 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Helpers ──────────────────────────────────────────────────────────────
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isAuth() && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return isAuth() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // ─── Global curated foods ─────────────────────────────────────────────────
+    // Authenticated users can read. Only admins can write.
+    match /foods/{foodId} {
+      allow read: if isAuth();
+      allow write: if isAdmin();
+    }
+
+    // ─── User documents ───────────────────────────────────────────────────────
+    match /users/{uid} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow create: if isOwner(uid);
+      allow update: if isOwner(uid);
+      allow delete: if isAdmin();
+
+      // Custom foods
+      match /myFoods/{foodId} {
+        allow read, write: if isOwner(uid);
+      }
+
+      // Favorites
+      match /favorites/{foodId} {
+        allow read, write: if isOwner(uid);
+      }
+
+      // Search cache
+      match /searchCache/{queryHash} {
+        allow read, write: if isOwner(uid);
+      }
+
+      // Food logs
+      match /foodLogs/{date}/entries/{entryId} {
+        allow read, write: if isOwner(uid);
+      }
+
+      // Recipes
+      match /recipes/{recipeId} {
+        allow read, write: if isOwner(uid);
+      }
+
+      // Activity logs
+      match /activityLogs/{date}/entries/{activityId} {
+        allow read, write: if isOwner(uid);
+      }
+
+      // Habits
+      match /habits/{habitId} {
+        allow read, write: if isOwner(uid);
+      }
+
+      // Habit completions
+      match /habitCompletions/{date}/entries/{completionId} {
+        allow read, write: if isOwner(uid);
+      }
+
+      // Water logs
+      match /waterLogs/{date} {
+        allow read, write: if isOwner(uid);
+      }
+
+      // Progress entries
+      match /progressEntries/{entryId} {
+        allow read, write: if isOwner(uid);
+      }
+    }
+
+    // ─── Coach-client relation (future expansion) ─────────────────────────────
+    match /coaches/{coachId} {
+      allow read: if isOwner(coachId) || isAdmin();
+      allow write: if isAdmin();
+
+      match /clients/{clientUid} {
+        allow read: if isOwner(coachId) || isOwner(clientUid);
+        allow write: if isOwner(coachId) || isAdmin();
+      }
+    }
+  }
+}
