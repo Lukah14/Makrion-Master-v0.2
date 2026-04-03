@@ -61,9 +61,9 @@ export default function MemorableMomentsSection({ moments, onSaveMoment }) {
   const quoteIndex = new Date().getDate() % motivationalQuotes.length;
   const dailyQuote = motivationalQuotes[quoteIndex];
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (noteText.trim() || moodRating) {
-      onSaveMoment?.({
+      await onSaveMoment?.({
         text: noteText.trim(),
         moodRating,
         photoUrl: null,

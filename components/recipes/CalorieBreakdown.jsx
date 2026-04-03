@@ -38,9 +38,10 @@ export default function CalorieBreakdown({ recipe }) {
 
   if (!recipe) return null;
 
-  const proteinKcal = (recipe.protein || 0) * 4;
-  const carbsKcal = (recipe.carbs || 0) * 4;
-  const fatKcal = (recipe.fat || 0) * 9;
+  const nps = recipe.nutritionPerServing || {};
+  const proteinKcal = (nps.protein || recipe.protein || 0) * 4;
+  const carbsKcal = (nps.carbs || recipe.carbs || 0) * 4;
+  const fatKcal = (nps.fat || recipe.fat || 0) * 9;
   const totalKcal = proteinKcal + carbsKcal + fatKcal || 1;
 
   const carbsPct = Math.round((carbsKcal / totalKcal) * 100);

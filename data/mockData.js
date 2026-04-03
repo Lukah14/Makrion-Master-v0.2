@@ -1,3 +1,5 @@
+import { toDateKey } from '@/lib/dateKey';
+
 export const userData = {
   name: 'Sarah',
   greeting: 'Good morning',
@@ -28,6 +30,7 @@ export const getWeekDates = () => {
       date: date.getDate(),
       isToday: date.toDateString() === today.toDateString(),
       fullDate: date,
+      dateKey: toDateKey(date),
     });
   }
   return dates;

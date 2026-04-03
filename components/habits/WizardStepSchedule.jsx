@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, Switch, StyleSheet } from 'react-native';
-import { CalendarDays, Bell, Flag } from 'lucide-react-native';
+import { CalendarDays } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 
 const FREQUENCY_OPTIONS = [
@@ -13,8 +13,6 @@ const FREQUENCY_OPTIONS = [
 ];
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
-const PRIORITY_OPTIONS = ['Low', 'Default', 'High', 'Urgent'];
 
 function FrequencySection({ repeatRule, onRepeatRuleChange, repeatDays, onRepeatDaysChange }) {
   const { colors: Colors } = useTheme();
@@ -80,8 +78,6 @@ function ScheduleSection({
   onEndDateEnabledChange,
   endDateDays,
   onEndDateDaysChange,
-  priority,
-  onPriorityChange,
 }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
@@ -137,25 +133,6 @@ function ScheduleSection({
         </View>
       )}
 
-      <View style={styles.divider} />
-
-      <View style={styles.settingRow}>
-        <Bell size={20} color={Colors.error} />
-        <Text style={styles.settingLabel}>Time and reminders</Text>
-        <View style={styles.countBadge}>
-          <Text style={styles.countBadgeText}>0</Text>
-        </View>
-      </View>
-
-      <View style={styles.divider} />
-
-      <View style={styles.settingRow}>
-        <Flag size={20} color={Colors.error} />
-        <Text style={styles.settingLabel}>Priority</Text>
-        <TouchableOpacity style={styles.priorityChip} activeOpacity={0.7}>
-          <Text style={styles.priorityChipText}>{priority || 'Default'}</Text>
-        </TouchableOpacity>
-      </View>
     </View>
   );
 }
@@ -169,8 +146,6 @@ export default function WizardStepSchedule({
   onEndDateEnabledChange,
   endDateDays,
   onEndDateDaysChange,
-  priority,
-  onPriorityChange,
   showScheduleDetails,
 }) {
   const { colors: Colors } = useTheme();
@@ -191,8 +166,6 @@ export default function WizardStepSchedule({
           onEndDateEnabledChange={onEndDateEnabledChange}
           endDateDays={endDateDays}
           onEndDateDaysChange={onEndDateDaysChange}
-          priority={priority}
-          onPriorityChange={onPriorityChange}
         />
       )}
       <View style={{ height: 40 }} />
@@ -335,29 +308,5 @@ const createStyles = (Colors) => StyleSheet.create({
     fontSize: 16,
     color: Colors.textPrimary,
     fontFamily: 'PlusJakartaSans-Medium',
-  },
-  countBadge: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: Colors.innerBorder,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  countBadgeText: {
-    fontSize: 14,
-    fontFamily: 'PlusJakartaSans-Bold',
-    color: Colors.textPrimary,
-  },
-  priorityChip: {
-    backgroundColor: Colors.error + '15',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 10,
-  },
-  priorityChipText: {
-    fontSize: 14,
-    fontFamily: 'PlusJakartaSans-SemiBold',
-    color: Colors.error,
   },
 });

@@ -1,132 +1,88 @@
-import { useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
-import { ChevronLeft, ChevronRight, Link2, MessageSquare } from 'lucide-react-native';
+import { useState, useMemo } from 'react';
+import { View, Text, ScrollView, StyleSheet } from 'react-native';
+import { Link2, MessageSquare } from 'lucide-react-native';
+import MonthlyCalendar from '@/components/calendar/MonthlyCalendar';
+import { getMonthDateKeyRange } from '@/lib/calendarUtils';
+import { toDateKey } from '@/lib/dateKey';
 
 const DARK = '#1A1A1A';
 const CARD = '#2A2A2A';
 const ACCENT = '#E8526A';
 const TEXT_PRIMARY = '#FFFFFF';
-const TEXT_SECONDARY = '#9CA3AF';
 const TEXT_MUTED = '#6B7280';
-const COMPLETED_BG = '#2A2A2A';
-const COMPLETED_DOT = '#22C55E';
 
-const MONTH_NAMES = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
-
-const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
-function buildCalendar(year, month) {
-  const firstDay = new Date(year, month, 1);
-  const lastDay = new Date(year, month + 1, 0);
-  const startDow = (firstDay.getDay() + 6) % 7;
-
-  const cells = [];
-  for (let i = 0; i < startDow; i++) {
-    const d = new Date(year, month, -startDow + i + 1);
-    cells.push({ date: d, currentMonth: false });
+function noteDateKey(n) {
+  if (!n?.date) return null;
+  if (typeof n.date === 'string') {
+    const s = n.date.slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
   }
-  for (let d = 1; d <= lastDay.getDate(); d++) {
-    cells.push({ date: new Date(year, month, d), currentMonth: true });
-  }
-  const remainder = cells.length % 7;
-  if (remainder !== 0) {
-    for (let i = 1; i <= 7 - remainder; i++) {
-      cells.push({ date: new Date(year, month + 1, i), currentMonth: false });
-    }
-  }
-  return cells;
-}
-
-function toDateStr(date) {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
+  const d = new Date(n.date);
+  if (Number.isNaN(d.getTime())) return null;
+  return toDateKey(d);
 }
 
 export default function HabitDetailCalendar({ habit }) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const todayStr = toDateStr(today);
+  const todayStr = toDateKey(today);
 
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
 
-  const completedSet = new Set(habit.completionHistory || []);
+  const completionHistory = habit.completionHistory || [];
   const notes = habit.notes || [];
 
-  const cells = buildCalendar(viewYear, viewMonth);
+  const monthMeta = useMemo(() => {
+    const completed = new Set(completionHistory);
+    const { keys } = getMonthDateKeyRange(viewYear, viewMonth);
+    const meta = {};
+    keys.forEach((k) => {
+      meta[k] = {
+        hasTrackedData: completed.has(k),
+        hasMoment: notes.some((n) => noteDateKey(n) === k),
+      };
+    });
+    return meta;
+  }, [viewYear, viewMonth, completionHistory, notes]);
 
   const monthNotes = notes.filter((n) => {
-    const d = new Date(n.date);
-    return d.getFullYear() === viewYear && d.getMonth() === viewMonth;
+    const k = noteDateKey(n);
+    if (!k) return false;
+    const [y, m] = k.split('-').map(Number);
+    return y === viewYear && m - 1 === viewMonth;
   });
 
   const prevMonth = () => {
-    if (viewMonth === 0) { setViewMonth(11); setViewYear(viewYear - 1); }
-    else setViewMonth(viewMonth - 1);
+    if (viewMonth === 0) {
+      setViewMonth(11);
+      setViewYear((y) => y - 1);
+    } else setViewMonth((m) => m - 1);
   };
   const nextMonth = () => {
-    if (viewMonth === 11) { setViewMonth(0); setViewYear(viewYear + 1); }
-    else setViewMonth(viewMonth + 1);
+    if (viewMonth === 11) {
+      setViewMonth(0);
+      setViewYear((y) => y + 1);
+    } else setViewMonth((m) => m + 1);
   };
 
-  const streakText = habit.streak > 0
-    ? `${habit.streak} ${habit.streak === 1 ? 'DAY' : 'DAYS'}`
-    : '0 DAYS';
+  const streakText =
+    habit.streak > 0 ? `${habit.streak} ${habit.streak === 1 ? 'DAY' : 'DAYS'}` : '0 DAYS';
 
   return (
     <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
       <View style={styles.calendarCard}>
-        <View style={styles.monthNav}>
-          <TouchableOpacity onPress={prevMonth} activeOpacity={0.7} style={styles.navBtn}>
-            <ChevronLeft size={20} color={ACCENT} />
-          </TouchableOpacity>
-          <View style={styles.monthTitleBlock}>
-            <Text style={styles.monthTitle}>{MONTH_NAMES[viewMonth]}</Text>
-            <Text style={styles.yearText}>{viewYear}</Text>
-          </View>
-          <TouchableOpacity onPress={nextMonth} activeOpacity={0.7} style={styles.navBtn}>
-            <ChevronRight size={20} color={ACCENT} />
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.dayHeaders}>
-          {DAY_LABELS.map((d) => (
-            <Text key={d} style={styles.dayHeader}>{d}</Text>
-          ))}
-        </View>
-
-        <View style={styles.grid}>
-          {cells.map((cell, idx) => {
-            const dateStr = toDateStr(cell.date);
-            const isToday = dateStr === todayStr;
-            const isDone = completedSet.has(dateStr);
-            const isCurrent = cell.currentMonth;
-
-            return (
-              <View key={idx} style={styles.cell}>
-                <View style={[
-                  styles.cellInner,
-                  isDone && styles.cellDone,
-                  isToday && !isDone && styles.cellToday,
-                ]}>
-                  <Text style={[
-                    styles.cellText,
-                    !isCurrent && styles.cellTextMuted,
-                    isDone && styles.cellTextDone,
-                    isToday && !isDone && styles.cellTextToday,
-                  ]}>
-                    {cell.date.getDate()}
-                  </Text>
-                </View>
-              </View>
-            );
-          })}
-        </View>
+        <MonthlyCalendar
+          year={viewYear}
+          monthIndex={viewMonth}
+          selectedDateKey={todayStr}
+          monthMeta={monthMeta}
+          loading={false}
+          onPrevMonth={prevMonth}
+          onNextMonth={nextMonth}
+          onTitlePress={undefined}
+          variant="dark"
+        />
       </View>
 
       <View style={styles.section}>
@@ -173,85 +129,8 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginTop: 16,
     borderRadius: 16,
-    padding: 16,
-  },
-  monthNav: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-  navBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  monthTitleBlock: {
-    alignItems: 'center',
-  },
-  monthTitle: {
-    fontSize: 18,
-    fontFamily: 'PlusJakartaSans-Bold',
-    color: TEXT_PRIMARY,
-  },
-  yearText: {
-    fontSize: 14,
-    color: TEXT_SECONDARY,
-    marginTop: 2,
-  },
-  dayHeaders: {
-    flexDirection: 'row',
-    marginBottom: 8,
-  },
-  dayHeader: {
-    flex: 1,
-    textAlign: 'center',
-    fontSize: 12,
-    fontFamily: 'PlusJakartaSans-SemiBold',
-    color: TEXT_MUTED,
-  },
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-  },
-  cell: {
-    width: `${100 / 7}%`,
-    aspectRatio: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 3,
-  },
-  cellInner: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cellDone: {
-    backgroundColor: COMPLETED_DOT,
-  },
-  cellToday: {
-    borderWidth: 2,
-    borderColor: ACCENT,
-  },
-  cellText: {
-    fontSize: 14,
-    fontFamily: 'PlusJakartaSans-Medium',
-    color: TEXT_PRIMARY,
-  },
-  cellTextMuted: {
-    color: TEXT_MUTED,
-  },
-  cellTextDone: {
-    color: '#FFFFFF',
-    fontFamily: 'PlusJakartaSans-Bold',
-  },
-  cellTextToday: {
-    color: ACCENT,
-    fontFamily: 'PlusJakartaSans-Bold',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
   },
   section: {
     marginHorizontal: 16,

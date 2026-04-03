@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { View, Text, Image, TouchableOpacity, Modal, Pressable, StyleSheet } from 'react-native';
 import { Plus, Flame, Trash2, Pencil } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
@@ -82,6 +82,10 @@ function MealCard({ meal, onAddFood }) {
   const s = createS(Colors);
   const [menuVisible, setMenuVisible] = useState(false);
   const [items, setItems] = useState(meal.items || []);
+
+  useEffect(() => {
+    setItems(meal.items || []);
+  }, [meal.items]);
 
   const totalCal = items.reduce((a, i) => a + (i.calories || 0), meal.items.length > 0 ? 0 : meal.totalCalories);
   const calcFromItems = items.length > 0;

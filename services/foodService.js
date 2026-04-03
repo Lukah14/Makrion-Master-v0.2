@@ -12,6 +12,7 @@ import {
   orderBy,
   limit,
   serverTimestamp,
+  onSnapshot,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { computeNutritionPer100g, GRAM_EQUIVALENTS } from '@/lib/servingConversion';
@@ -129,6 +130,24 @@ export async function listMyFoods(uid) {
   );
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+/**
+ * @returns {() => void} unsubscribe
+ */
+export function subscribeMyFoods(uid, onNext, onError) {
+  const q = query(
+    myFoodsRef(uid),
+    where('isDeleted', '==', false),
+    orderBy('name')
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      onNext(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    },
+    (err) => onError?.(err)
+  );
 }
 
 export async function searchMyFoods(uid, searchTerm) {
@@ -280,6 +299,69 @@ export async function listFavorites(uid) {
 export async function isFavorite(uid, foodId) {
   const snap = await getDoc(doc(db, 'users', uid, 'favorites', foodId));
   return snap.exists();
+}
+
+function round1(n) {
+  return Math.round((Number(n) || 0) * 10) / 10;
+}
+
+/**
+ * Convert a favorites/{id} document into the shape FoodSearchView / AddToLog expect.
+ */
+export function favoriteDocToSearchModel(fav) {
+  const p = fav.per100g || {};
+  const kcal100 = p.kcal ?? p.calories ?? 0;
+  const protein100 = p.protein ?? 0;
+  const carbs100 = p.carbs ?? p.carbohydrate ?? 0;
+  const fat100 = p.fat ?? 0;
+  const servingGrams = fav.servingGrams || 100;
+  const ratio = servingGrams / 100;
+
+  const per100g = {
+    kcal: kcal100,
+    protein: protein100,
+    carbs: carbs100,
+    fat: fat100,
+  };
+
+  return {
+    id: fav.foodId || fav.id,
+    name: fav.name,
+    brand: fav.brand || null,
+    category: fav.category || null,
+    servingText: `${servingGrams}g`,
+    calories: Math.round(kcal100 * ratio),
+    protein: round1(protein100 * ratio),
+    carbs: round1(carbs100 * ratio),
+    fat: round1(fat100 * ratio),
+    source: fav.source || 'saved',
+    per100g,
+    servingGrams,
+    servings: [
+      {
+        id: 'saved_fav',
+        description: `${servingGrams} g`,
+        numberOfUnits: 1,
+        metricAmount: servingGrams,
+        metricUnit: 'g',
+        isDefault: true,
+        isGramServing: true,
+        per100g: {
+          calories: kcal100,
+          protein: protein100,
+          carbohydrate: carbs100,
+          fat: fat100,
+        },
+        nutrition: {
+          calories: Math.round(kcal100 * ratio),
+          protein: round1(protein100 * ratio),
+          carbohydrate: round1(carbs100 * ratio),
+          fat: round1(fat100 * ratio),
+        },
+        displayLabel: `${servingGrams} g`,
+      },
+    ],
+  };
 }
 
 // ─── Search cache (users/{uid}/searchCache/{queryHash}) ───────────────────────

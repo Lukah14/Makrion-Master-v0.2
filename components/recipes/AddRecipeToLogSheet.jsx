@@ -23,11 +23,12 @@ export default function AddRecipeToLogSheet({ visible, recipe, onAdd, onClose })
 
   if (!recipe) return null;
 
+  const nps = recipe.nutritionPerServing || {};
   const perServing = {
-    calories: recipe.calories,
-    protein: recipe.protein,
-    carbs: recipe.carbs,
-    fat: recipe.fat,
+    calories: nps.kcal || nps.calories || recipe.calories || 0,
+    protein: nps.protein || recipe.protein || 0,
+    carbs: nps.carbs || recipe.carbs || 0,
+    fat: nps.fat || recipe.fat || 0,
   };
 
   const total = {

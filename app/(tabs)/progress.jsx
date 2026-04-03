@@ -1,8 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { ScrollView, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { TrendingUp } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
+import { useNutritionDate } from '@/context/NutritionDateContext';
 import { useAuth } from '@/context/AuthContext';
+import CalendarModal from '@/components/calendar/CalendarModal';
+import SelectedDateBar from '@/components/calendar/SelectedDateBar';
+import { useUser } from '@/hooks/useUser';
 import { Layout } from '@/constants/layout';
 import WeightSummaryCard from '@/components/progress/WeightSummaryCard';
 import GoalPhaseCard from '@/components/progress/GoalPhaseCard';
@@ -11,29 +16,15 @@ import GoalProgressCard from '@/components/progress/GoalProgressCard';
 import TotalCaloriesCard from '@/components/progress/TotalCaloriesCard';
 import BMICard from '@/components/progress/BMICard';
 import ProgressRing from '@/components/common/ProgressRing';
+import EmptyState from '@/components/common/EmptyState';
 import Card from '@/components/common/Card';
 import Svg, { Rect, Text as SvgText } from 'react-native-svg';
 import { Dimensions } from 'react-native';
-import { progressData, progressHistory } from '@/data/mockData';
 import { listProgressEntries, saveWeightEntry } from '@/services/progressService';
 
 const screenWidth = Dimensions.get('window').width - 64;
 
 const TABS = ['Weight', 'Nutrition', 'Activity', 'Habits'];
-
-const FALLBACK_HISTORY = progressHistory.weights;
-
-const DEFAULT_GOAL = {
-  type: 'Fat Loss',
-  startWeight: 72,
-  currentWeight: progressData.currentWeight,
-  targetWeight: 62,
-  calorieTarget: 1800,
-  autoAdjustments: true,
-  weeklyRate: 0.5,
-  weeksToGoal: 20,
-  notes: '',
-};
 
 function TabSelector({ activeTab, onTabChange }) {
   const { colors: Colors } = useTheme();
@@ -54,14 +45,40 @@ function TabSelector({ activeTab, onTabChange }) {
   );
 }
 
-function WeightView() {
+function WeightView({ dateKey, bumpCalendarRefresh }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
   const { user } = useAuth();
-  const [goal, setGoal] = useState(DEFAULT_GOAL);
+  const { userData } = useUser();
+  const userGoals = userData?.goals || null;
+
+  const [goal, setGoal] = useState({
+    type: userGoals?.type || 'Fat Loss',
+    startWeight: userGoals?.startWeight || null,
+    currentWeight: userGoals?.currentWeight || null,
+    targetWeight: userGoals?.targetWeight || null,
+    calorieTarget: userGoals?.calorieTarget || null,
+    autoAdjustments: userGoals?.autoAdjustments ?? true,
+    weeklyRate: userGoals?.weeklyRate || 0.5,
+    weeksToGoal: userGoals?.weeksToGoal || null,
+    notes: userGoals?.notes || '',
+  });
+
   const [sheetOpen, setSheetOpen] = useState(false);
   const [entries, setEntries] = useState([]);
   const [lastDate, setLastDate] = useState(null);
+
+  useEffect(() => {
+    if (userGoals) {
+      setGoal((prev) => ({
+        ...prev,
+        type: userGoals.type || prev.type,
+        startWeight: userGoals.startWeight ?? prev.startWeight,
+        targetWeight: userGoals.targetWeight ?? prev.targetWeight,
+        calorieTarget: userGoals.calorieTarget ?? prev.calorieTarget,
+      }));
+    }
+  }, [userGoals]);
 
   const loadEntries = useCallback(async () => {
     if (!user) return;
@@ -77,8 +94,7 @@ function WeightView() {
         setLastDate(latest.date);
       }
     } catch {
-      const mapped = FALLBACK_HISTORY.map((w) => ({ date: w.date, weight: w.value }));
-      setEntries(mapped);
+      setEntries([]);
     }
   }, [user]);
 
@@ -94,17 +110,34 @@ function WeightView() {
       const filtered = prev.filter((e) => e.date !== dateStr);
       return [...filtered, { date: dateStr, weight }].sort((a, b) => a.date.localeCompare(b.date));
     });
+    bumpCalendarRefresh?.();
   };
 
-  const chartData = entries.length > 0
-    ? entries.slice(-12).map((e) => ({
-        label: new Date(e.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-        value: e.weight,
-      }))
-    : FALLBACK_HISTORY.map((w) => ({
-        label: new Date(w.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short' }),
-        value: w.value,
-      }));
+  if (entries.length === 0) {
+    return (
+      <View>
+        <EmptyState
+          icon={TrendingUp}
+          title="No progress data yet"
+          message="Log your first weight to start tracking progress"
+          actionLabel="Update Progress"
+          onAction={() => setSheetOpen(true)}
+        />
+        <UpdateProgressSheet
+          visible={sheetOpen}
+          lastWeight={goal.currentWeight}
+          onSave={handleSaveWeight}
+          onClose={() => setSheetOpen(false)}
+          dateKey={dateKey}
+        />
+      </View>
+    );
+  }
+
+  const chartData = entries.slice(-12).map((e) => ({
+    label: new Date(e.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+    value: e.weight,
+  }));
 
   return (
     <View>
@@ -123,19 +156,20 @@ function WeightView() {
         currentWeight={goal.currentWeight}
         goalWeight={goal.targetWeight}
         startWeight={goal.startWeight}
-        hasData={entries.length > 0 || FALLBACK_HISTORY.length > 0}
+        hasData={entries.length > 0}
         weightHistory={chartData}
       />
 
       <TotalCaloriesCard />
 
-      <BMICard weight={goal.currentWeight} height={175} />
+      <BMICard weight={goal.currentWeight} height={userData?.profile?.height || 175} />
 
       <UpdateProgressSheet
         visible={sheetOpen}
         lastWeight={goal.currentWeight}
         onSave={handleSaveWeight}
         onClose={() => setSheetOpen(false)}
+        dateKey={dateKey}
       />
     </View>
   );
@@ -181,61 +215,22 @@ function CalorieBarChart({ data }) {
 }
 
 function NutritionView() {
-  const { colors: Colors } = useTheme();
-  const styles = createStyles(Colors);
   return (
-    <View>
-      <Card>
-        <Text style={styles.chartTitle}>Weekly Calories</Text>
-        <CalorieBarChart data={progressHistory.weeklyCalories} />
-      </Card>
-      <Card>
-        <Text style={styles.chartTitle}>Macro Averages</Text>
-        <View style={styles.macroAvgRow}>
-          <View style={styles.macroAvg}>
-            <ProgressRing radius={28} strokeWidth={5} progress={0.72} color={Colors.proteinRing} bgColor={Colors.border}>
-              <Text style={styles.macroAvgValue}>72%</Text>
-            </ProgressRing>
-            <Text style={styles.macroAvgLabel}>Protein</Text>
-          </View>
-          <View style={styles.macroAvg}>
-            <ProgressRing radius={28} strokeWidth={5} progress={0.85} color={Colors.carbsRing} bgColor={Colors.border}>
-              <Text style={styles.macroAvgValue}>85%</Text>
-            </ProgressRing>
-            <Text style={styles.macroAvgLabel}>Carbs</Text>
-          </View>
-          <View style={styles.macroAvg}>
-            <ProgressRing radius={28} strokeWidth={5} progress={0.65} color={Colors.fatRing} bgColor={Colors.border}>
-              <Text style={styles.macroAvgValue}>65%</Text>
-            </ProgressRing>
-            <Text style={styles.macroAvgLabel}>Fat</Text>
-          </View>
-        </View>
-      </Card>
-    </View>
+    <EmptyState
+      icon={TrendingUp}
+      title="No nutrition analysis yet"
+      message="Log meals to see weekly calorie and macro breakdowns"
+    />
   );
 }
 
 function ActivityView() {
-  const { colors: Colors } = useTheme();
-  const styles = createStyles(Colors);
   return (
-    <View>
-      <Card>
-        <Text style={styles.chartTitle}>Weekly Steps</Text>
-        <CalorieBarChart data={progressHistory.weeklySteps} />
-      </Card>
-      <View style={styles.statCards}>
-        <Card style={styles.miniCard}>
-          <Text style={styles.miniValue}>35.8K</Text>
-          <Text style={styles.miniLabel}>Total steps this week</Text>
-        </Card>
-        <Card style={styles.miniCard}>
-          <Text style={styles.miniValue}>5.1K</Text>
-          <Text style={styles.miniLabel}>Average daily</Text>
-        </Card>
-      </View>
-    </View>
+    <EmptyState
+      icon={TrendingUp}
+      title="No activity data yet"
+      message="Start logging workouts to see weekly activity trends"
+    />
   );
 }
 
@@ -302,6 +297,8 @@ export default function ProgressScreen() {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
   const [activeTab, setActiveTab] = useState('Weight');
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const { dateKey, bumpCalendarRefresh } = useNutritionDate();
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -311,13 +308,21 @@ export default function ProgressScreen() {
         showsVerticalScrollIndicator={false}
       >
         <Text style={styles.screenTitle}>Progress</Text>
+        <SelectedDateBar
+          dateKey={dateKey}
+          onOpenCalendar={() => setCalendarOpen(true)}
+          subtitle="Weight & daily context"
+        />
         <TabSelector activeTab={activeTab} onTabChange={setActiveTab} />
-        {activeTab === 'Weight' && <WeightView />}
+        {activeTab === 'Weight' && (
+          <WeightView dateKey={dateKey} bumpCalendarRefresh={bumpCalendarRefresh} />
+        )}
         {activeTab === 'Nutrition' && <NutritionView />}
         {activeTab === 'Activity' && <ActivityView />}
         {activeTab === 'Habits' && <HabitsView />}
         <View style={{ height: 40 }} />
       </ScrollView>
+      <CalendarModal visible={calendarOpen} onClose={() => setCalendarOpen(false)} />
     </SafeAreaView>
   );
 }

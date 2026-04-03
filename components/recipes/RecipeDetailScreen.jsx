@@ -1,13 +1,17 @@
 import { useState } from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView, Image,
-  StyleSheet, Dimensions, ActivityIndicator,
+  StyleSheet, Dimensions, ActivityIndicator, Alert,
 } from 'react-native';
 import {
   ArrowLeft, Bookmark, Share2, Plus, Clock, Users,
   ChefHat, Star, Heart, Zap, Flame,
 } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
+import { useAuth } from '@/context/AuthContext';
+import { useNutritionDate } from '@/context/NutritionDateContext';
+import { useFoodLog } from '@/hooks/useFoodLog';
+import { useSavedRecipes } from '@/hooks/useSavedRecipes';
 import AddRecipeToLogSheet from './AddRecipeToLogSheet';
 import NutritionFacts from './NutritionFacts';
 import CalorieBreakdown from './CalorieBreakdown';
@@ -232,27 +236,71 @@ function NutritionTab({ recipe }) {
   );
 }
 
-export default function RecipeDetailScreen({ recipe, onBack, onSaveToggle, loadingDetail }) {
+export default function RecipeDetailScreen({ recipe, onBack, loadingDetail }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
+  const { user } = useAuth();
+  const { dateKey } = useNutritionDate();
+  const foodLog = useFoodLog(dateKey);
+  const { isRecipeSaved, toggleSaveRecipe } = useSavedRecipes();
 
   const [detailTab, setDetailTab] = useState('Ingredients');
-  const [saved, setSaved] = useState(recipe?.saved || false);
   const [servings, setServings] = useState(recipe?.servings || 1);
   const [addSheetOpen, setAddSheetOpen] = useState(false);
   const [toastVisible, setToastVisible] = useState(false);
 
   if (!recipe) return null;
 
-  const handleSave = () => {
-    setSaved(!saved);
-    if (onSaveToggle) onSaveToggle(recipe.id, !saved);
+  const saved = isRecipeSaved(recipe.id);
+
+  const handleSave = async () => {
+    try {
+      await toggleSaveRecipe(recipe);
+    } catch (e) {
+      Alert.alert('Error', e?.message || 'Could not update saved recipes');
+    }
   };
 
-  const handleConfirmAdd = (entry) => {
+  const handleConfirmAdd = async (entry) => {
     setAddSheetOpen(false);
-    setToastVisible(true);
-    setTimeout(() => setToastVisible(false), 3000);
+    if (!user) return;
+    try {
+      const nps = recipe.nutritionPerServing || {};
+      const perServingKcal = nps.kcal || nps.calories || recipe.calories || 0;
+      const perServingProtein = nps.protein || recipe.protein || 0;
+      const perServingCarbs = nps.carbs || recipe.carbs || 0;
+      const perServingFat = nps.fat || recipe.fat || 0;
+      const srvCount = entry.servings || 1;
+
+      const totalGrams = (recipe.totalGrams || 100) * srvCount / (recipe.servings || 1);
+      const per100gKcal = totalGrams > 0 ? (perServingKcal * srvCount * 100) / totalGrams : 0;
+      const per100gProtein = totalGrams > 0 ? (perServingProtein * srvCount * 100) / totalGrams : 0;
+      const per100gCarbs = totalGrams > 0 ? (perServingCarbs * srvCount * 100) / totalGrams : 0;
+      const per100gFat = totalGrams > 0 ? (perServingFat * srvCount * 100) / totalGrams : 0;
+
+      const recipeFood = {
+        id: recipe.id,
+        name: recipe.name,
+        brand: 'Recipe',
+        per100g: {
+          kcal: Math.round(per100gKcal),
+          protein: Math.round(per100gProtein * 10) / 10,
+          carbs: Math.round(per100gCarbs * 10) / 10,
+          fat: Math.round(per100gFat * 10) / 10,
+        },
+        servingGrams: Math.round(totalGrams),
+      };
+
+      await foodLog.addEntry(recipeFood, entry.mealType, Math.round(totalGrams), {
+        type: 'recipe',
+        servings: srvCount,
+      });
+
+      setToastVisible(true);
+      setTimeout(() => setToastVisible(false), 3000);
+    } catch (err) {
+      Alert.alert('Error', err.message || 'Could not add recipe to food log');
+    }
   };
 
   return (
@@ -283,16 +331,16 @@ export default function RecipeDetailScreen({ recipe, onBack, onSaveToggle, loadi
 
           <View style={styles.imageMeta}>
             <View style={styles.categoryBadge}>
-              <Text style={styles.categoryBadgeText}>{recipe.cuisine || recipe.category || 'Recipe'}</Text>
+              <Text style={styles.categoryBadgeText}>{recipe.category || 'Recipe'}</Text>
             </View>
             <View style={styles.imageStats}>
               <View style={styles.imageStat}>
                 <Clock size={13} color="rgba(255,255,255,0.9)" />
-                <Text style={styles.imageStatText}>{recipe.cookTime}m</Text>
+                <Text style={styles.imageStatText}>{recipe.cookTime ?? recipe.cookTimeMinutes ?? 0}m</Text>
               </View>
               <View style={styles.imageStat}>
                 <Zap size={13} color="rgba(255,255,255,0.9)" />
-                <Text style={styles.imageStatText}>{recipe.calories} kcal</Text>
+                <Text style={styles.imageStatText}>{recipe.nutritionPerServing?.kcal ?? recipe.calories ?? 0} kcal</Text>
               </View>
             </View>
           </View>

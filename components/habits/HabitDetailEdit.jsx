@@ -3,7 +3,7 @@ import {
   View, Text, TouchableOpacity, ScrollView, TextInput, StyleSheet, Alert,
 } from 'react-native';
 import {
-  Pencil, Shapes, Info, Bell, Flag, CalendarDays, Archive, RotateCcw, Trash2, ChevronRight, X,
+  Pencil, Shapes, Info, CalendarDays, Archive, RotateCcw, Trash2, ChevronRight, X,
 } from 'lucide-react-native';
 
 const DARK = '#1A1A1A';
@@ -21,9 +21,6 @@ const REPEAT_LABELS = {
   some_days_period: 'Periodic',
   repeat: 'Repeat',
 };
-
-const PRIORITY_OPTIONS = ['low', 'default', 'high'];
-const PRIORITY_LABELS = { low: 'Low', default: 'Default', high: 'High' };
 
 function EditRow({ icon, label, value, onPress, valueStyle, destructive }) {
   return (
@@ -46,21 +43,14 @@ function EditRow({ icon, label, value, onPress, valueStyle, destructive }) {
 export default function HabitDetailEdit({ habit, onSave, onArchive, onDelete, onRestart }) {
   const [name, setName] = useState(habit.name || '');
   const [description, setDescription] = useState(habit.description || '');
-  const [priority, setPriority] = useState(habit.priority || 'default');
   const [editingName, setEditingName] = useState(false);
   const [editingDesc, setEditingDesc] = useState(false);
-
-  const cyclePriority = () => {
-    const idx = PRIORITY_OPTIONS.indexOf(priority);
-    setPriority(PRIORITY_OPTIONS[(idx + 1) % PRIORITY_OPTIONS.length]);
-  };
 
   const handleSave = () => {
     onSave?.({
       ...habit,
       name: name.trim() || habit.name,
       description: description.trim(),
-      priority,
     });
   };
 
@@ -162,30 +152,6 @@ export default function HabitDetailEdit({ habit, onSave, onArchive, onDelete, on
             numberOfLines={3}
           />
         )}
-
-        <View style={styles.divider} />
-
-        <View style={styles.row}>
-          <View style={styles.rowIcon}>
-            <Bell size={18} color={ACCENT} />
-          </View>
-          <Text style={styles.rowLabel}>Time and reminders</Text>
-          <View style={styles.countBadge}>
-            <Text style={styles.countBadgeText}>{habit.reminderCount || 0}</Text>
-          </View>
-        </View>
-
-        <View style={styles.divider} />
-
-        <TouchableOpacity style={styles.row} onPress={cyclePriority} activeOpacity={0.7}>
-          <View style={styles.rowIcon}>
-            <Flag size={18} color={ACCENT} />
-          </View>
-          <Text style={styles.rowLabel}>Priority</Text>
-          <View style={styles.priorityBadge}>
-            <Text style={styles.priorityBadgeText}>{PRIORITY_LABELS[priority]}</Text>
-          </View>
-        </TouchableOpacity>
 
         <View style={styles.divider} />
 
@@ -347,30 +313,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  countBadge: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: '#3A3A3A',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  countBadgeText: {
-    fontSize: 13,
-    fontFamily: 'PlusJakartaSans-Bold',
-    color: TEXT_PRIMARY,
-  },
-  priorityBadge: {
-    backgroundColor: ACCENT + '33',
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 10,
-  },
-  priorityBadgeText: {
-    fontSize: 13,
-    fontFamily: 'PlusJakartaSans-Bold',
-    color: ACCENT,
   },
   dateBadge: {
     backgroundColor: ACCENT + '33',

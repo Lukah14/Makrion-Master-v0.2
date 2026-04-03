@@ -51,8 +51,13 @@ service cloud.firestore {
         allow read, write: if isOwner(uid);
       }
 
-      // Recipes
+      // Recipes (user-created)
       match /recipes/{recipeId} {
+        allow read, write: if isOwner(uid);
+      }
+
+      // Saved / bookmarked recipes (FatSecret or own)
+      match /savedRecipes/{savedId} {
         allow read, write: if isOwner(uid);
       }
 
@@ -80,6 +85,25 @@ service cloud.firestore {
       match /progressEntries/{entryId} {
         allow read, write: if isOwner(uid);
       }
+    }
+
+    // ─── Profile documents (new flat structure) ──────────────────────────────
+    match /profiles/{uid} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow create: if isOwner(uid);
+      allow update: if isOwner(uid);
+      allow delete: if isAdmin();
+
+      match /daily_logs/{dateKey}        { allow read, write: if isOwner(uid); }
+      match /food_entries/{entryId}      { allow read, write: if isOwner(uid); }
+      match /my_foods/{foodId}           { allow read, write: if isOwner(uid); }
+      match /habits/{habitId}            { allow read, write: if isOwner(uid); }
+      match /habit_completions/{id}      { allow read, write: if isOwner(uid); }
+      match /habit_logs/{id}             { allow read, write: if isOwner(uid); }
+      match /habit_checklist_items/{id}  { allow read, write: if isOwner(uid); }
+      match /activities/{id}             { allow read, write: if isOwner(uid); }
+      match /weight_entries/{id}         { allow read, write: if isOwner(uid); }
+      match /memorable_moments/{id}      { allow read, write: if isOwner(uid); }
     }
 
     // ─── Coach-client relation (future expansion) ─────────────────────────────

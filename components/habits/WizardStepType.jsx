@@ -20,12 +20,6 @@ const TYPES = [
     description: 'Establish a time value as a daily goal or limit for the habit',
     premium: false,
   },
-  {
-    id: 'checklist',
-    label: 'WITH A CHECKLIST',
-    description: 'Evaluate your activity based on a set of sub-items',
-    premium: true,
-  },
 ];
 
 export default function WizardStepType({ selectedType, onSelectType }) {

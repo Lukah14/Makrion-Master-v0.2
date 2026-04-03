@@ -1,7 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import {
-  listFoodLogEntries,
   addFoodLogEntry,
   updateFoodLogEntry,
   deleteFoodLogEntry,
@@ -10,72 +9,110 @@ import {
   updateEntryStatus,
   buildLogEntry,
   calcDailySummary,
+  calcNutrients,
+  subscribeFoodLogEntries,
+  listFoodLogEntries,
 } from '@/services/foodLogService';
 
-export function useFoodLog(date) {
+/**
+ * Live food log for users/{uid}/foodLogs/{dateKey}/entries (Firestore real-time).
+ */
+export function useFoodLog(dateKey) {
   const { user } = useAuth();
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const load = useCallback(async () => {
-    if (!user || !date) return;
-    setLoading(true);
-    try {
-      const data = await listFoodLogEntries(user.uid, date);
-      setEntries(data);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [user, date]);
-
   useEffect(() => {
-    load();
-  }, [load]);
+    if (!user || !dateKey) {
+      setEntries([]);
+      setLoading(false);
+      setError(null);
+      return undefined;
+    }
 
-  async function addEntry(food, mealType, grams, options = {}) {
-    if (!user) return;
-    const entry = buildLogEntry({ food, mealType, grams, ...options });
-    const id = await addFoodLogEntry(user.uid, date, entry);
-    setEntries((prev) => [...prev, { id, ...entry }]);
-    return id;
-  }
-
-  async function editEntry(entryId, changes) {
-    if (!user) return;
-    await updateFoodLogEntry(user.uid, date, entryId, changes);
-    setEntries((prev) =>
-      prev.map((e) => (e.id === entryId ? { ...e, ...changes } : e))
+    setLoading(true);
+    setEntries([]);
+    const unsub = subscribeFoodLogEntries(
+      user.uid,
+      dateKey,
+      (list) => {
+        setEntries(list);
+        setLoading(false);
+        setError(null);
+      },
+      (err) => {
+        setError(err?.message || 'Failed to load food log');
+        setLoading(false);
+      }
     );
-  }
+    return () => unsub();
+  }, [user?.uid, dateKey]);
 
-  async function removeEntry(entryId) {
-    if (!user) return;
-    await deleteFoodLogEntry(user.uid, date, entryId);
-    setEntries((prev) => prev.filter((e) => e.id !== entryId));
-  }
+  const addEntry = useCallback(
+    async (food, mealType, grams, options = {}) => {
+      if (!user) throw new Error('User not authenticated');
+      if (!dateKey) throw new Error('Date is required');
+      if (!mealType) throw new Error('Meal type is required');
+      if (!grams || grams <= 0) throw new Error('Grams must be > 0');
 
-  async function duplicateEntry(entryId) {
-    if (!user) return;
-    await duplicateFoodLogEntry(user.uid, date, entryId);
-    await load();
-  }
+      const entry = buildLogEntry({ food, mealType, grams, ...options });
+      return addFoodLogEntry(user.uid, dateKey, entry);
+    },
+    [user, dateKey]
+  );
 
-  async function moveEntry(entryId, toDate, newMealType) {
-    if (!user) return;
-    await moveFoodLogEntry(user.uid, date, toDate, entryId, newMealType);
-    setEntries((prev) => prev.filter((e) => e.id !== entryId));
-  }
+  const editEntry = useCallback(
+    async (entryId, changes) => {
+      if (!user || !dateKey) return;
+      await updateFoodLogEntry(user.uid, dateKey, entryId, changes);
+    },
+    [user, dateKey]
+  );
 
-  async function toggleStatus(entryId, currentStatus) {
-    const next = currentStatus === 'logged' ? 'planned' : 'logged';
-    await updateEntryStatus(user.uid, date, entryId, next);
-    setEntries((prev) =>
-      prev.map((e) => (e.id === entryId ? { ...e, status: next } : e))
-    );
-  }
+  const removeEntry = useCallback(
+    async (entryId) => {
+      if (!user || !dateKey) return;
+      await deleteFoodLogEntry(user.uid, dateKey, entryId);
+    },
+    [user, dateKey]
+  );
+
+  const duplicateEntry = useCallback(
+    async (entryId) => {
+      if (!user || !dateKey) return;
+      await duplicateFoodLogEntry(user.uid, dateKey, entryId);
+    },
+    [user, dateKey]
+  );
+
+  const moveEntry = useCallback(
+    async (entryId, toDate, newMealType) => {
+      if (!user || !dateKey) return;
+      await moveFoodLogEntry(user.uid, dateKey, toDate, entryId, newMealType);
+    },
+    [user, dateKey]
+  );
+
+  const toggleStatus = useCallback(
+    async (entryId, currentStatus) => {
+      if (!user || !dateKey) return;
+      const next = currentStatus === 'logged' ? 'planned' : 'logged';
+      await updateEntryStatus(user.uid, dateKey, entryId, next);
+    },
+    [user, dateKey]
+  );
+
+  const reload = useCallback(async () => {
+    if (!user || !dateKey) return;
+    try {
+      const data = await listFoodLogEntries(user.uid, dateKey);
+      setEntries(data);
+      setError(null);
+    } catch (err) {
+      setError(err?.message || 'Refresh failed');
+    }
+  }, [user, dateKey]);
 
   const summary = calcDailySummary(entries);
 
@@ -90,6 +127,6 @@ export function useFoodLog(date) {
     duplicateEntry,
     moveEntry,
     toggleStatus,
-    reload: load,
+    reload,
   };
 }

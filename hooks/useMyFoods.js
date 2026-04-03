@@ -1,12 +1,13 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import {
-  listMyFoods,
   searchMyFoods,
   createMyFood,
   updateMyFood,
   deleteMyFood,
   myFoodToSearchModel,
+  subscribeMyFoods,
+  listMyFoods,
 } from '@/services/foodService';
 
 export function useMyFoods() {
@@ -15,27 +16,29 @@ export function useMyFoods() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const load = useCallback(async () => {
+  useEffect(() => {
     if (!user) {
       setFoods([]);
       setLoading(false);
-      return;
+      setError(null);
+      return undefined;
     }
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await listMyFoods(user.uid);
-      setFoods(data);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [user]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+    setLoading(true);
+    const unsub = subscribeMyFoods(
+      user.uid,
+      (list) => {
+        setFoods(list);
+        setLoading(false);
+        setError(null);
+      },
+      (err) => {
+        setError(err?.message || 'My foods failed to load');
+        setLoading(false);
+      }
+    );
+    return () => unsub();
+  }, [user?.uid]);
 
   const search = useCallback(
     async (term) => {
@@ -43,11 +46,12 @@ export function useMyFoods() {
       try {
         return await searchMyFoods(user.uid, term);
       } catch {
-        return foods.filter((f) => {
-          const lower = term.toLowerCase();
-          return f.name?.toLowerCase().includes(lower) ||
-                 f.brand?.toLowerCase().includes(lower);
-        });
+        const lower = (term || '').toLowerCase();
+        return foods.filter(
+          (f) =>
+            f.name?.toLowerCase().includes(lower) ||
+            f.brand?.toLowerCase().includes(lower)
+        );
       }
     },
     [user, foods]
@@ -56,32 +60,39 @@ export function useMyFoods() {
   const create = useCallback(
     async (foodData) => {
       if (!user) throw new Error('Not authenticated');
-      const id = await createMyFood(user.uid, foodData);
-      await load();
-      return id;
+      return createMyFood(user.uid, foodData);
     },
-    [user, load]
+    [user]
   );
 
   const update = useCallback(
     async (foodId, changes) => {
       if (!user) throw new Error('Not authenticated');
       await updateMyFood(user.uid, foodId, changes);
-      await load();
     },
-    [user, load]
+    [user]
   );
 
   const remove = useCallback(
     async (foodId) => {
       if (!user) throw new Error('Not authenticated');
       await deleteMyFood(user.uid, foodId);
-      await load();
     },
-    [user, load]
+    [user]
   );
 
-  const searchModels = foods.map(myFoodToSearchModel);
+  const reload = useCallback(async () => {
+    if (!user) return;
+    try {
+      const data = await listMyFoods(user.uid);
+      setFoods(data);
+      setError(null);
+    } catch (err) {
+      setError(err?.message || 'Refresh failed');
+    }
+  }, [user]);
+
+  const searchModels = useMemo(() => foods.map(myFoodToSearchModel), [foods]);
 
   return {
     foods,
@@ -92,6 +103,6 @@ export function useMyFoods() {
     create,
     update,
     remove,
-    reload: load,
+    reload,
   };
 }

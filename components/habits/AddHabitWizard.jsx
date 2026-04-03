@@ -36,7 +36,6 @@ export default function AddHabitWizard({ visible, onClose, onSave, editingHabit 
   const [repeatDays, setRepeatDays] = useState(editingHabit?.repeatDays || []);
   const [endDateEnabled, setEndDateEnabled] = useState(editingHabit?.endDateEnabled || false);
   const [endDateDays, setEndDateDays] = useState(editingHabit?.endDateDays?.toString() || '60');
-  const [priority, setPriority] = useState(editingHabit?.priority || 'Default');
   const [showScheduleDetails, setShowScheduleDetails] = useState(false);
 
   const resetForm = () => {
@@ -61,7 +60,6 @@ export default function AddHabitWizard({ visible, onClose, onSave, editingHabit 
     setRepeatDays([]);
     setEndDateEnabled(false);
     setEndDateDays('60');
-    setPriority('Default');
     setShowScheduleDetails(false);
   };
 
@@ -113,7 +111,7 @@ export default function AddHabitWizard({ visible, onClose, onSave, editingHabit 
       endDateDays: endDateEnabled ? parseInt(endDateDays) : null,
       reminderTime: null,
       reminderCount: 0,
-      priority: priority.toLowerCase(),
+      priority: 'default',
       color: selectedCategory?.iconBgColor || '#2DA89E',
       iconBg: selectedCategory?.iconBgColor || '#2DA89E',
       iconColor: selectedCategory?.iconColor || '#000000',
@@ -203,8 +201,6 @@ export default function AddHabitWizard({ visible, onClose, onSave, editingHabit 
               onEndDateEnabledChange={setEndDateEnabled}
               endDateDays={endDateDays}
               onEndDateDaysChange={setEndDateDays}
-              priority={priority}
-              onPriorityChange={setPriority}
               showScheduleDetails={showScheduleDetails}
             />
           )}

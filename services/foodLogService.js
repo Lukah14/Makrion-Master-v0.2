@@ -10,6 +10,7 @@ import {
   query,
   orderBy,
   serverTimestamp,
+  onSnapshot,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
@@ -93,6 +94,23 @@ export async function listFoodLogEntries(uid, date) {
   const q = query(entriesRef(uid, date), orderBy('createdAt'));
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+/**
+ * Real-time listener for one day's food log.
+ * @returns {() => void} unsubscribe
+ */
+export function subscribeFoodLogEntries(uid, date, onNext, onError) {
+  const q = query(entriesRef(uid, date), orderBy('createdAt'));
+  return onSnapshot(
+    q,
+    (snap) => {
+      onNext(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    },
+    (err) => {
+      if (onError) onError(err);
+    }
+  );
 }
 
 export async function updateFoodLogEntry(uid, date, entryId, changes) {

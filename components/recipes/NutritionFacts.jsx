@@ -44,8 +44,12 @@ export default function NutritionFacts({ recipe }) {
 
   if (!recipe) return null;
 
+  const nps = recipe.nutritionPerServing || {};
   const {
-    calories = 0, protein = 0, carbs = 0, fat = 0,
+    calories = nps.kcal || nps.calories || 0,
+    protein = nps.protein || 0,
+    carbs = nps.carbs || 0,
+    fat = nps.fat || 0,
     saturatedFat = 0, transFat = 0, polyunsaturatedFat, monounsaturatedFat,
     fiber = 0, sugar = 0, cholesterol = 0, sodium = 0, salt,
     servingSize, servings = 1,

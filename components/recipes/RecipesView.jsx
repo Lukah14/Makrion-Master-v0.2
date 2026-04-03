@@ -8,7 +8,10 @@ import { useTheme } from '@/context/ThemeContext';
 import { RECIPES } from '@/data/recipeData';
 import RecipeFilterSheet, { EMPTY_FILTERS } from './RecipeFilterSheet';
 import RecipeDetailScreen from './RecipeDetailScreen';
+import CreateRecipeScreen from './CreateRecipeScreen';
 import { getCategoryIcon } from './foodCategoryIcons';
+import { useRecipes } from '@/hooks/useRecipes';
+import { useSavedRecipes } from '@/hooks/useSavedRecipes';
 
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
@@ -42,7 +45,6 @@ function normalizeFatSecretRecipe(r, index) {
     cookTime: r.cookTime || r.totalTime || 30,
     prepTime: r.prepTime || 10,
     rating: r.rating || 4.0,
-    cuisine: r.categories?.[0] || r.types?.[0] || 'International',
     category: r.types?.[0] || r.categories?.[0] || 'Main Course',
     diet: r.categories || [],
     saved: false,
@@ -87,7 +89,7 @@ async function fetchFatSecretRecipes(query, recipeType) {
   return (data.recipes || []).map(normalizeFatSecretRecipe);
 }
 
-const RECIPE_TABS = ['Explore', 'Saved Foods', 'My Recipes'];
+const RECIPE_TABS = ['Explore', 'Saved Recipes', 'My Recipes'];
 
 function SectionHeader({ title, onSeeAll }) {
   const { colors: Colors } = useTheme();
@@ -124,11 +126,9 @@ function ExploreSectionCard({ icon, title, subtitle, onPress }) {
   );
 }
 
-function ExploreTab({ recipes, recentRecipes, onPress, onSave, onSwitchTab, loading }) {
+function ExploreTab({ recentRecipes, savedPreview, savedLoading, onPress, onToggleSaveRecipe, onSwitchTab, loading }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
-
-  const saved = recipes.filter((r) => r.saved);
 
   if (loading) {
     return (
@@ -171,9 +171,11 @@ function ExploreTab({ recipes, recentRecipes, onPress, onSave, onSwitchTab, load
       </View>
 
       <View style={styles.section}>
-        <SectionHeader title="Saved Foods" onSeeAll={saved.length > 0 ? () => onSwitchTab('Saved Foods') : undefined} />
-        {saved.length > 0 ? (
-          saved.slice(0, 3).map((r) => {
+        <SectionHeader title="Saved recipes" onSeeAll={savedPreview.length > 0 ? () => onSwitchTab('Saved Recipes') : undefined} />
+        {savedLoading ? (
+          <ActivityIndicator style={{ marginVertical: 16 }} color={Colors.textTertiary} />
+        ) : savedPreview.length > 0 ? (
+          savedPreview.map((r) => {
             const catIcon = getCategoryIcon(r.ingredients?.[0]?.name || r.name);
             return (
               <TouchableOpacity key={r.id} style={styles.goalCard} onPress={() => onPress(r)} activeOpacity={0.85}>
@@ -187,7 +189,7 @@ function ExploreTab({ recipes, recentRecipes, onPress, onSave, onSwitchTab, load
                   <Text style={styles.goalName} numberOfLines={1}>{r.name}</Text>
                   <Text style={styles.goalMeta}>{r.cookTime}m · {r.calories} kcal</Text>
                 </View>
-                <TouchableOpacity onPress={() => onSave(r.id)} activeOpacity={0.8} style={{ padding: 8 }}>
+                <TouchableOpacity onPress={() => onToggleSaveRecipe(r)} activeOpacity={0.8} style={{ padding: 8 }}>
                   <Bookmark size={16} color={Colors.textPrimary} fill={Colors.textPrimary} strokeWidth={2} />
                 </TouchableOpacity>
               </TouchableOpacity>
@@ -231,17 +233,17 @@ function SearchResultCard({ recipe, onPress, onSave }) {
         <Text style={styles.searchResultName} numberOfLines={2}>{recipe.name}</Text>
         <View style={styles.searchResultMeta}>
           <Zap size={12} color={Colors.calories} />
-          <Text style={styles.searchResultCal}>{recipe.calories} kcal</Text>
+          <Text style={styles.searchResultCal}>{recipe.nutritionPerServing?.kcal ?? recipe.calories ?? 0} kcal</Text>
           {recipe.servings > 1 && (
             <Text style={styles.searchResultServing}>· {recipe.servings} servings</Text>
           )}
         </View>
         <View style={styles.searchResultMacros}>
-          <Text style={styles.searchResultMacro}>P <Text style={styles.searchResultMacroVal}>{recipe.protein}g</Text></Text>
+          <Text style={styles.searchResultMacro}>P <Text style={styles.searchResultMacroVal}>{recipe.nutritionPerServing?.protein ?? recipe.protein ?? 0}g</Text></Text>
           <Text style={styles.searchResultMacroDot}>·</Text>
-          <Text style={styles.searchResultMacro}>C <Text style={styles.searchResultMacroVal}>{recipe.carbs}g</Text></Text>
+          <Text style={styles.searchResultMacro}>C <Text style={styles.searchResultMacroVal}>{recipe.nutritionPerServing?.carbs ?? recipe.carbs ?? 0}g</Text></Text>
           <Text style={styles.searchResultMacroDot}>·</Text>
-          <Text style={styles.searchResultMacro}>F <Text style={styles.searchResultMacroVal}>{recipe.fat}g</Text></Text>
+          <Text style={styles.searchResultMacro}>F <Text style={styles.searchResultMacroVal}>{recipe.nutritionPerServing?.fat ?? recipe.fat ?? 0}g</Text></Text>
         </View>
         {recipe.source === 'fatsecret' && (
           <View style={styles.sourceBadge}>
@@ -251,7 +253,7 @@ function SearchResultCard({ recipe, onPress, onSave }) {
       </View>
       <TouchableOpacity
         style={styles.searchResultSaveBtn}
-        onPress={() => onSave(recipe.id)}
+        onPress={() => onSave(recipe)}
         activeOpacity={0.8}
       >
         <Bookmark
@@ -265,7 +267,7 @@ function SearchResultCard({ recipe, onPress, onSave }) {
   );
 }
 
-function SearchResultsView({ results, loading, error, query, onPress, onSave }) {
+function SearchResultsView({ results, loading, error, query, onPress, onSave, savedIds = new Set() }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
 
@@ -307,32 +309,53 @@ function SearchResultsView({ results, loading, error, query, onPress, onSave }) 
         <Text style={styles.searchResultsCount}>{results.length} recipes</Text>
       </View>
       {results.map((r) => (
-        <SearchResultCard key={r.id} recipe={r} onPress={onPress} onSave={onSave} />
+        <SearchResultCard
+          key={r.id}
+          recipe={{ ...r, saved: savedIds?.has(String(r.id)) || !!r.saved }}
+          onPress={onPress}
+          onSave={onSave}
+        />
       ))}
     </View>
   );
 }
 
-function SavedFoodsTab({ recipes, onPress, onRemove }) {
+function SavedRecipesTab({ recipes, loading, error, onPress, onRemove }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
 
-  const saved = recipes.filter((r) => r.saved);
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={Colors.textPrimary} />
+        <Text style={styles.loadingText}>Loading saved recipes...</Text>
+      </View>
+    );
+  }
 
-  if (saved.length === 0) {
+  if (error) {
+    return (
+      <View style={styles.emptyState}>
+        <Text style={styles.emptyTitle}>Could not load saved recipes</Text>
+        <Text style={styles.emptySubtitle}>{error}</Text>
+      </View>
+    );
+  }
+
+  if (recipes.length === 0) {
     return (
       <View style={styles.emptyState}>
         <Text style={styles.emptyIcon}>🔖</Text>
-        <Text style={styles.emptyTitle}>No saved foods yet</Text>
-        <Text style={styles.emptySubtitle}>Save recipes and foods to find them quickly later</Text>
+        <Text style={styles.emptyTitle}>No saved recipes yet</Text>
+        <Text style={styles.emptySubtitle}>Save recipes from search or explore to find them here</Text>
       </View>
     );
   }
 
   return (
     <View style={styles.section}>
-      <SectionHeader title="Recently saved" />
-      {saved.map((r) => {
+      <SectionHeader title="Saved recipes" />
+      {recipes.map((r) => {
         const primaryIngredient = r.ingredients?.[0]?.name;
         const catIcon = getCategoryIcon(primaryIngredient || r.name);
         return (
@@ -367,22 +390,25 @@ function SavedFoodsTab({ recipes, onPress, onRemove }) {
   );
 }
 
-function MyRecipesTab({ onPress }) {
+function MyRecipesTab({ onPress, onCreate, recipes, loading, error, onDelete }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
 
-  const myRecipes = [
-    { id: 'my1', name: 'My Protein Shake', prepTime: 3, cookTime: 0, calories: 320, image: 'https://images.pexels.com/photos/1346382/pexels-photo-1346382.jpeg?auto=compress&cs=tinysrgb&w=400' },
-  ];
-
   return (
     <>
-      <TouchableOpacity style={styles.createRecipeBtn} activeOpacity={0.85}>
+      <TouchableOpacity style={styles.createRecipeBtn} activeOpacity={0.85} onPress={onCreate}>
         <Plus size={20} color={Colors.textPrimary} strokeWidth={2.5} />
         <Text style={styles.createRecipeText}>Create a new recipe</Text>
       </TouchableOpacity>
 
-      {myRecipes.length === 0 ? (
+      {loading ? (
+        <ActivityIndicator style={{ marginTop: 32 }} color={Colors.textTertiary} />
+      ) : error ? (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyTitle}>Could not load recipes</Text>
+          <Text style={styles.emptySubtitle}>{error}</Text>
+        </View>
+      ) : recipes.length === 0 ? (
         <View style={styles.emptyState}>
           <Text style={styles.emptyIcon}>👨‍🍳</Text>
           <Text style={styles.emptyTitle}>No recipes yet</Text>
@@ -391,26 +417,33 @@ function MyRecipesTab({ onPress }) {
       ) : (
         <View style={styles.section}>
           <SectionHeader title="My recipes" />
-          {myRecipes.map((r) => (
-            <View key={r.id} style={styles.myRecipeCard}>
-              <Image source={{ uri: r.image }} style={styles.myRecipeImage} />
-              <View style={styles.myRecipeInfo}>
-                <Text style={styles.myRecipeName}>{r.name}</Text>
-                <Text style={styles.myRecipeMeta}>{r.prepTime + r.cookTime}m · {r.calories} kcal</Text>
-              </View>
-              <View style={styles.myRecipeActions}>
-                <TouchableOpacity style={styles.myActionBtn} activeOpacity={0.7}>
-                  <Pencil size={14} color={Colors.textSecondary} />
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.myActionBtn} activeOpacity={0.7}>
-                  <Copy size={14} color={Colors.textSecondary} />
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.myActionBtn} activeOpacity={0.7}>
-                  <Trash2 size={14} color={Colors.error} />
-                </TouchableOpacity>
-              </View>
-            </View>
-          ))}
+          {recipes.map((r) => {
+            const kcal = r.nutritionPerServing?.kcal ?? r.calories ?? 0;
+            const totalTime = (r.prepTimeMinutes || 0) + (r.cookTimeMinutes || 0);
+            return (
+              <TouchableOpacity key={r.id} style={styles.myRecipeCard} activeOpacity={0.7} onPress={() => onPress?.(r)}>
+                <View style={styles.myRecipeIconWrap}>
+                  <Text style={styles.myRecipeEmoji}>🍽️</Text>
+                </View>
+                <View style={styles.myRecipeInfo}>
+                  <Text style={styles.myRecipeName} numberOfLines={1}>{r.name}</Text>
+                  <Text style={styles.myRecipeMeta}>
+                    {totalTime > 0 ? `${totalTime}m · ` : ''}{kcal} kcal · {r.servings || 1} serving{(r.servings || 1) > 1 ? 's' : ''}
+                  </Text>
+                </View>
+                <View style={styles.myRecipeActions}>
+                  <TouchableOpacity
+                    style={styles.myActionBtn}
+                    activeOpacity={0.7}
+                    onPress={() => onDelete?.(r.id)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Trash2 size={14} color={Colors.error || '#FF3B30'} />
+                  </TouchableOpacity>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
         </View>
       )}
     </>
@@ -420,6 +453,23 @@ function MyRecipesTab({ onPress }) {
 export default function RecipesView() {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
+
+  const {
+    recipes: userRecipes,
+    loading: userRecipesLoading,
+    error: userRecipesError,
+    addRecipe,
+    removeRecipe,
+    reload: reloadRecipes,
+  } = useRecipes();
+  const {
+    recipes: savedRecipes,
+    loading: savedRecipesLoading,
+    error: savedRecipesError,
+    toggleSaveRecipe,
+    unsaveRecipe,
+    savedIds,
+  } = useSavedRecipes();
 
   const [tab, setTab] = useState('Explore');
   const [query, setQuery] = useState('');
@@ -435,6 +485,7 @@ export default function RecipesView() {
   const [selectedRecipe, setSelectedRecipe] = useState(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [recentRecipes, setRecentRecipes] = useState([]);
+  const [showCreateRecipe, setShowCreateRecipe] = useState(false);
 
   const debounceRef = useRef(null);
 
@@ -490,20 +541,26 @@ export default function RecipesView() {
     (filters.mealType?.length || 0) +
     (filters.diet?.length || 0) +
     (filters.cookTime?.length || 0) +
-    (filters.cuisine?.length || 0) +
+    
     (filters.nutrition?.length || 0) +
     (filters.ingredients?.length || 0) +
     (filters.applyPreferences ? 1 : 0) +
     (filters.savedOnly ? 1 : 0);
 
-  const handleSave = (id) => {
-    setLocalRecipes((prev) => prev.map((r) => (r.id === id ? { ...r, saved: !r.saved } : r)));
-    setSearchResults((prev) => prev.map((r) => (r.id === id ? { ...r, saved: !r.saved } : r)));
+  const handleToggleSaveRecipe = async (recipe) => {
+    try {
+      await toggleSaveRecipe(recipe);
+    } catch {
+      // Firestore / rules error — UI still syncs from savedRecipes listener
+    }
   };
 
-  const handleRemoveSaved = (id) => {
-    setLocalRecipes((prev) => prev.map((r) => (r.id === id ? { ...r, saved: false } : r)));
-    setSearchResults((prev) => prev.map((r) => (r.id === id ? { ...r, saved: false } : r)));
+  const handleRemoveSaved = async (id) => {
+    try {
+      await unsaveRecipe(id);
+    } catch {
+      // ignore
+    }
   };
 
   const handleRecipePress = useCallback(async (recipe) => {
@@ -534,16 +591,21 @@ export default function RecipesView() {
     }
   }, []);
 
+  if (showCreateRecipe) {
+    return (
+      <CreateRecipeScreen
+        onBack={() => setShowCreateRecipe(false)}
+        onCreated={() => reloadRecipes()}
+      />
+    );
+  }
+
   if (selectedRecipe) {
     return (
       <RecipeDetailScreen
         recipe={selectedRecipe}
         loadingDetail={loadingDetail}
         onBack={() => { setSelectedRecipe(null); setLoadingDetail(false); }}
-        onSaveToggle={(id, saved) => {
-          handleSave(id);
-          setSelectedRecipe((prev) => ({ ...prev, saved }));
-        }}
       />
     );
   }
@@ -554,7 +616,7 @@ export default function RecipesView() {
         <Search size={18} color={Colors.textTertiary} />
         <TextInput
           style={styles.searchInput}
-          placeholder="Search recipes, ingredients, cuisines..."
+          placeholder="Search recipes, ingredients..."
           placeholderTextColor={Colors.textTertiary}
           value={query}
           onChangeText={setQuery}
@@ -604,29 +666,40 @@ export default function RecipesView() {
             error={searchError}
             query={debouncedQuery}
             onPress={handleRecipePress}
-            onSave={handleSave}
+            onSave={handleToggleSaveRecipe}
+            savedIds={savedIds}
           />
         ) : (
           <>
             {tab === 'Explore' && (
               <ExploreTab
-                recipes={localRecipes}
                 recentRecipes={recentRecipes}
+                savedPreview={savedRecipes.slice(0, 3)}
+                savedLoading={savedRecipesLoading}
                 onPress={handleRecipePress}
-                onSave={handleSave}
+                onToggleSaveRecipe={handleToggleSaveRecipe}
                 onSwitchTab={setTab}
                 loading={false}
               />
             )}
-            {tab === 'Saved Foods' && (
-              <SavedFoodsTab
-                recipes={localRecipes}
+            {tab === 'Saved Recipes' && (
+              <SavedRecipesTab
+                recipes={savedRecipes}
+                loading={savedRecipesLoading}
+                error={savedRecipesError}
                 onPress={handleRecipePress}
                 onRemove={handleRemoveSaved}
               />
             )}
             {tab === 'My Recipes' && (
-              <MyRecipesTab onPress={handleRecipePress} />
+              <MyRecipesTab
+                recipes={userRecipes}
+                loading={userRecipesLoading}
+                error={userRecipesError}
+                onPress={handleRecipePress}
+                onCreate={() => setShowCreateRecipe(true)}
+                onDelete={(id) => removeRecipe(id)}
+              />
             )}
           </>
         )}
@@ -940,13 +1013,18 @@ const createStyles = (Colors) => StyleSheet.create({
     shadowRadius: 6,
     elevation: 1,
   },
-  myRecipeImage: {
-    width: 64,
-    height: 64,
-    borderRadius: 12,
-    backgroundColor: Colors.border,
+  myRecipeIconWrap: {
+    width: 52,
+    height: 52,
+    borderRadius: 14,
+    backgroundColor: Colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
     marginRight: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
+  myRecipeEmoji: { fontSize: 24 },
   myRecipeInfo: { flex: 1 },
   myRecipeName: {
     fontSize: 15,

@@ -71,7 +71,7 @@ function ServingPickerInline({ servings, selectedId, onSelect, visible, onClose 
   );
 }
 
-export default function AddToLogSheet({ visible, food, onAdd, onClose }) {
+export default function AddToLogSheet({ visible, food, onAdd, onClose, initialMealType }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
 
@@ -79,6 +79,13 @@ export default function AddToLogSheet({ visible, food, onAdd, onClose }) {
   const [selectedServing, setSelectedServing] = useState(null);
   const [quantity, setQuantity] = useState(1);
   const [pickerVisible, setPickerVisible] = useState(false);
+
+  useEffect(() => {
+    if (visible && initialMealType) {
+      const label = initialMealType.charAt(0).toUpperCase() + initialMealType.slice(1);
+      if (MEAL_TYPES.includes(label)) setMealType(label);
+    }
+  }, [visible, initialMealType]);
 
   useEffect(() => {
     if (food && visible) {

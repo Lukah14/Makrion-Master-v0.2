@@ -23,6 +23,7 @@ export async function createUserDocument(firebaseUser, extra = {}) {
     photoURL: firebaseUser.photoURL || '',
     role: 'user',
     onboardingCompleted: false,
+    profileCompleted: false,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
     profile: {
@@ -30,20 +31,26 @@ export async function createUserDocument(firebaseUser, extra = {}) {
       dateOfBirth: '',
       height: null,
       weight: null,
-      activityLevel: 'moderate',
+      currentWeight: null,
+      activityLevel: '',
     },
     goals: {
-      calories: 2000,
-      protein: 150,
-      carbs: 200,
-      fat: 65,
-      water: 2.5,
+      calories: null,
+      protein: null,
+      carbs: null,
+      fat: null,
+      water: null,
       targetWeight: null,
     },
-    preferences: {
+    settings: {
       darkMode: false,
-      units: 'metric',
       language: 'en',
+    },
+    stats: {
+      streak: 0,
+    },
+    preferences: {
+      units: 'metric',
     },
   });
 }

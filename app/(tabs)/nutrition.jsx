@@ -1,38 +1,37 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { ScrollView, View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Plus, Search } from 'lucide-react-native';
+import { Plus } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
+import { useNutritionDate } from '@/context/NutritionDateContext';
 import { Layout } from '@/constants/layout';
 import Card from '@/components/common/Card';
 import ProgressRing from '@/components/common/ProgressRing';
 import StrikeBadge from '@/components/common/StrikeBadge';
-import MealLog from '@/components/dashboard/MealLog';
 import FoodSearchView from '@/components/nutrition/FoodSearchView';
+import FoodLogSections from '@/components/nutrition/FoodLogSections';
+import CalendarModal from '@/components/calendar/CalendarModal';
+import SelectedDateBar from '@/components/calendar/SelectedDateBar';
 import RecipesView from '@/components/recipes/RecipesView';
 import { useFoodLog } from '@/hooks/useFoodLog';
+import { useUser } from '@/hooks/useUser';
 import { isNutritionStrikeComplete, countStreak } from '@/lib/strikeHelpers';
-import { dailyGoals, meals } from '@/data/mockData';
+import { todayDateKey } from '@/lib/dateKey';
 
-function todayDateString() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-function NutritionHeader({ logSummary }) {
+function NutritionHeader({ logSummary, goals }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
-  const calTarget = dailyGoals.calories.target;
-  const protTarget = dailyGoals.protein.target;
-  const carbTarget = dailyGoals.carbs.target;
-  const fatTarget = dailyGoals.fat.target;
+  const calTarget = goals?.calories || 0;
+  const protTarget = goals?.protein || 0;
+  const carbTarget = goals?.carbs || 0;
+  const fatTarget = goals?.fat || 0;
 
-  const consumed = logSummary?.totalsLogged?.kcal ?? dailyGoals.calories.consumed;
-  const protConsumed = Math.round(logSummary?.totalsLogged?.protein ?? dailyGoals.protein.consumed);
-  const carbConsumed = Math.round(logSummary?.totalsLogged?.carbs ?? dailyGoals.carbs.consumed);
-  const fatConsumed = Math.round(logSummary?.totalsLogged?.fat ?? dailyGoals.fat.consumed);
+  const consumed = logSummary?.totalsLogged?.kcal ?? 0;
+  const protConsumed = Math.round(logSummary?.totalsLogged?.protein ?? 0);
+  const carbConsumed = Math.round(logSummary?.totalsLogged?.carbs ?? 0);
+  const fatConsumed = Math.round(logSummary?.totalsLogged?.fat ?? 0);
 
-  const progress = consumed / calTarget;
+  const progress = calTarget > 0 ? consumed / calTarget : 0;
 
   return (
     <Card style={styles.headerCard}>
@@ -63,7 +62,7 @@ function NutritionHeader({ logSummary }) {
 function MacroMini({ label, value, target, color }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
-  const progress = value / target;
+  const progress = target > 0 ? value / target : 0;
   return (
     <View style={styles.macroMini}>
       <View style={styles.macroMiniBar}>
@@ -93,68 +92,86 @@ function TabSelector({ activeTab, onTabChange }) {
     </View>
   );
 }
-
-function FoodLogView({ entries }) {
-  if (entries && entries.length > 0) {
-    const mealGroups = {};
-    for (const entry of entries) {
-      const mealKey = entry.mealType || 'snack';
-      if (!mealGroups[mealKey]) mealGroups[mealKey] = [];
-      mealGroups[mealKey].push(entry);
-    }
-
-    const MEAL_ORDER = ['breakfast', 'lunch', 'dinner', 'snack'];
-    const MEAL_EMOJI = { breakfast: '🌅', lunch: '☀️', dinner: '🌙', snack: '🍿' };
-    const loggedMeals = MEAL_ORDER
-      .filter((m) => mealGroups[m]?.length > 0)
-      .map((m) => ({
-        type: m.charAt(0).toUpperCase() + m.slice(1),
-        emoji: MEAL_EMOJI[m],
-        items: mealGroups[m].map((e) => ({
-          name: e.nameSnapshot || 'Food',
-          amount: `${e.grams || 0}g`,
-          calories: e.nutrientsSnapshot?.kcal || 0,
-          protein: Math.round(e.nutrientsSnapshot?.protein || 0),
-          carbs: Math.round(e.nutrientsSnapshot?.carbs || 0),
-          fat: Math.round(e.nutrientsSnapshot?.fat || 0),
-        })),
-      }));
-
-    return <MealLog meals={loggedMeals.length > 0 ? loggedMeals : meals} />;
-  }
-  return <MealLog meals={meals} />;
-}
-
-function SearchView() {
-  return <FoodSearchView />;
-}
-
-
 export default function NutritionScreen() {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
   const [activeTab, setActiveTab] = useState('Food Log');
-  const today = todayDateString();
-  const foodLog = useFoodLog(today);
+  const [searchMealType, setSearchMealType] = useState(null);
+  const [dateSheetOpen, setDateSheetOpen] = useState(false);
+  const { dateKey, bumpCalendarRefresh } = useNutritionDate();
+  const foodLog = useFoodLog(dateKey);
+  const { userData: userDoc } = useUser();
+  const today = todayDateKey();
   const isSearch = activeTab === 'Search';
   const isRecipes = activeTab === 'Recipes';
   const isFullScreen = isSearch || isRecipes;
 
-  const consumed = foodLog.summary?.totalsLogged?.kcal ?? dailyGoals.calories.consumed;
-  const calTarget = dailyGoals.calories.target;
-  const todayComplete = isNutritionStrikeComplete({ consumed, target: calTarget });
-  const strikeCount = countStreak([todayComplete, true, true, true, true]);
+  const goals = userDoc?.goals || {};
+  const consumed = foodLog.summary?.totalsLogged?.kcal ?? 0;
+  const calTarget = goals.calories || 0;
+  const todayComplete = calTarget > 0 && isNutritionStrikeComplete({ consumed, target: calTarget });
+  const strikeCount = calTarget > 0 ? countStreak([todayComplete]) : 0;
+
+  const handleAddMeal = useCallback((mealType) => {
+    setSearchMealType(mealType);
+    setActiveTab('Search');
+  }, []);
+
+  const handleFoodLogged = useCallback(() => {
+    setActiveTab('Food Log');
+    setSearchMealType(null);
+    bumpCalendarRefresh();
+  }, [bumpCalendarRefresh]);
+
+  const handleEditEntry = useCallback(async (entryId, changes) => {
+    try {
+      await foodLog.editEntry(entryId, changes);
+      bumpCalendarRefresh();
+    } catch {
+      // silently handled
+    }
+  }, [foodLog, bumpCalendarRefresh]);
+
+  const handleDeleteEntry = useCallback(async (entryId) => {
+    try {
+      await foodLog.removeEntry(entryId);
+      bumpCalendarRefresh();
+    } catch {
+      // silently handled
+    }
+  }, [foodLog, bumpCalendarRefresh]);
+
+  const handleMoveEntry = useCallback(async (entryId, newMealType) => {
+    try {
+      await foodLog.editEntry(entryId, { mealType: newMealType });
+      bumpCalendarRefresh();
+    } catch {
+      // silently handled
+    }
+  }, [foodLog, bumpCalendarRefresh]);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       {isFullScreen ? (
         <View style={styles.searchScreenWrap}>
           <View style={styles.searchHeader}>
-            <Text style={[styles.screenTitle, { marginBottom: 16 }]}>{isRecipes ? 'Recipes' : 'Nutrition'}</Text>
-            <TabSelector activeTab={activeTab} onTabChange={setActiveTab} />
+            <Text style={[styles.screenTitle, { marginBottom: 16 }]}>
+              {isRecipes ? 'Recipes' : 'Nutrition'}
+            </Text>
+            <TabSelector activeTab={activeTab} onTabChange={(tab) => {
+              if (tab !== 'Search') setSearchMealType(null);
+              setActiveTab(tab);
+            }} />
           </View>
           <View style={styles.searchBody}>
-            {isSearch && <SearchView />}
+            {isSearch && (
+              <FoodSearchView
+                initialMealType={searchMealType}
+                onFoodLogged={handleFoodLogged}
+                addEntry={foodLog.addEntry}
+                logDateKey={dateKey}
+              />
+            )}
             {isRecipes && <RecipesView />}
           </View>
         </View>
@@ -167,15 +184,28 @@ export default function NutritionScreen() {
           <View style={styles.pageHeader}>
             <Text style={styles.screenTitle}>Nutrition</Text>
             <View style={styles.headerActions}>
-              <StrikeBadge count={strikeCount} color={Colors.calories} />
-              <TouchableOpacity style={styles.headerIconBtn} activeOpacity={0.7}>
-                <Search size={20} color={Colors.textPrimary} />
-              </TouchableOpacity>
+              <StrikeBadge count={strikeCount} color="#34C759" />
             </View>
           </View>
-          <NutritionHeader logSummary={foodLog.summary} />
+          <SelectedDateBar
+            dateKey={dateKey}
+            onOpenCalendar={() => setDateSheetOpen(true)}
+            subtitle={dateKey === today ? 'Food log for today' : 'Food log for selected day'}
+          />
+          <NutritionHeader logSummary={foodLog.summary} goals={goals} />
           <TabSelector activeTab={activeTab} onTabChange={setActiveTab} />
-          {activeTab === 'Food Log' && <FoodLogView entries={foodLog.entries} />}
+          {activeTab === 'Food Log' && (
+            <FoodLogSections
+              entries={foodLog.entries}
+              summary={foodLog.summary}
+              loading={foodLog.loading}
+              error={foodLog.error}
+              onAddMeal={handleAddMeal}
+              onEditEntry={handleEditEntry}
+              onDeleteEntry={handleDeleteEntry}
+              onMoveEntry={handleMoveEntry}
+            />
+          )}
           <View style={{ height: 40 }} />
         </ScrollView>
       )}
@@ -183,11 +213,12 @@ export default function NutritionScreen() {
         <TouchableOpacity
           style={styles.fab}
           activeOpacity={0.8}
-          onPress={() => setActiveTab('Search')}
+          onPress={() => handleAddMeal('breakfast')}
         >
           <Plus size={24} color={Colors.onPrimary} />
         </TouchableOpacity>
       )}
+      <CalendarModal visible={dateSheetOpen} onClose={() => setDateSheetOpen(false)} />
     </SafeAreaView>
   );
 }
@@ -198,7 +229,6 @@ const createStyles = (Colors) => StyleSheet.create({
   content: { padding: Layout.screenPadding, paddingBottom: 100 },
   pageHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  headerIconBtn: { width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center' },
   screenTitle: { fontSize: 28, fontFamily: 'PlusJakartaSans-Bold', color: Colors.textPrimary },
   searchScreenWrap: { flex: 1, backgroundColor: Colors.background },
   searchHeader: { paddingHorizontal: Layout.screenPadding, paddingTop: 8, backgroundColor: Colors.background },
@@ -219,45 +249,5 @@ const createStyles = (Colors) => StyleSheet.create({
   tabActive: { backgroundColor: Colors.textPrimary },
   tabText: { fontSize: 14, fontFamily: 'PlusJakartaSans-Medium', color: Colors.textTertiary },
   tabTextActive: { color: Colors.onPrimary, fontFamily: 'PlusJakartaSans-SemiBold' },
-  mealCard: { padding: 16 },
-  mealHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  mealLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  mealEmoji: { fontSize: 28 },
-  mealType: { fontSize: 16, fontFamily: 'PlusJakartaSans-SemiBold', color: Colors.textPrimary },
-  mealTime: { fontSize: 12, color: Colors.textTertiary },
-  mealRight: { alignItems: 'flex-end' },
-  mealCalories: { fontSize: 15, fontFamily: 'PlusJakartaSans-Bold', color: Colors.textPrimary },
-  mealMacros: { fontSize: 11, color: Colors.textTertiary },
-  foodItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, borderTopWidth: 1, borderTopColor: Colors.divider },
-  foodName: { fontSize: 15, fontFamily: 'PlusJakartaSans-Medium', color: Colors.textPrimary },
-  foodAmount: { fontSize: 12, color: Colors.textTertiary },
-  foodRight: { alignItems: 'flex-end' },
-  foodCalories: { fontSize: 15, fontFamily: 'PlusJakartaSans-SemiBold', color: Colors.textPrimary },
-  foodMacros: { fontSize: 11, color: Colors.textTertiary },
-  addFoodBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 12, paddingVertical: 10, borderWidth: 1, borderColor: Colors.border, borderRadius: 12, borderStyle: 'dashed' },
-  addFoodText: { fontSize: 13, color: Colors.textTertiary },
-  searchContainer: { flexDirection: 'row', gap: 10, marginBottom: 12 },
-  searchBar: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.cardBackground, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, gap: 10, ...Layout.cardShadow },
-  searchInput: { flex: 1, fontSize: 15, color: Colors.textPrimary },
-  filterBtn: { width: 48, height: 48, backgroundColor: Colors.cardBackground, borderRadius: 14, justifyContent: 'center', alignItems: 'center', ...Layout.cardShadow },
-  quickActions: { flexDirection: 'row', gap: 10, marginBottom: 16 },
-  quickAction: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: Colors.cardBackground, paddingVertical: 12, borderRadius: 12, ...Layout.cardShadow },
-  quickActionText: { fontSize: 13, fontFamily: 'PlusJakartaSans-Medium', color: Colors.textSecondary },
-  foodSearchItem: { padding: 12 },
-  foodSearchRow: { flexDirection: 'row', alignItems: 'center' },
-  foodSearchImage: { width: 48, height: 48, borderRadius: 10, backgroundColor: Colors.border, marginRight: 12 },
-  foodSearchInfo: { flex: 1 },
-  foodSearchName: { fontSize: 15, fontFamily: 'PlusJakartaSans-SemiBold', color: Colors.textPrimary },
-  foodSearchBrand: { fontSize: 12, color: Colors.textTertiary, marginTop: 2 },
-  foodSearchNutrition: { alignItems: 'flex-end' },
-  foodSearchCal: { fontSize: 14, fontFamily: 'PlusJakartaSans-SemiBold', color: Colors.textPrimary },
-  foodSearchMacros: { fontSize: 11, color: Colors.textTertiary },
-  recipeGrid: { gap: 12 },
-  recipeCard: { backgroundColor: Colors.cardBackground, borderRadius: Layout.borderRadius.xl, overflow: 'hidden', marginBottom: 2, ...Layout.cardShadow },
-  recipeImage: { width: '100%', height: 160, backgroundColor: Colors.border },
-  recipeInfo: { padding: 14 },
-  recipeName: { fontSize: 16, fontFamily: 'PlusJakartaSans-SemiBold', color: Colors.textPrimary },
-  recipeMeta: { fontSize: 13, color: Colors.textTertiary, marginTop: 4 },
-  recipeCalories: { fontSize: 13, fontFamily: 'PlusJakartaSans-SemiBold', color: Colors.primary, marginTop: 4 },
   fab: { position: 'absolute', bottom: Platform.OS === 'ios' ? 100 : 80, right: 20, width: 56, height: 56, borderRadius: 28, backgroundColor: Colors.textPrimary, justifyContent: 'center', alignItems: 'center', shadowColor: Colors.shadowColor, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 10, elevation: 8, zIndex: 100 },
 });

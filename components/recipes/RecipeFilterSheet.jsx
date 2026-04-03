@@ -11,7 +11,6 @@ export const EMPTY_FILTERS = {
   mealType: [],
   diet: [],
   cookTime: [],
-  cuisine: [],
   nutrition: [],
   ingredients: [],
   applyPreferences: false,
@@ -177,7 +176,6 @@ export default function RecipeFilterSheet({ visible, filters, onApply, onClose }
     (localFilters.mealType?.length || 0) +
     (localFilters.diet?.length || 0) +
     (localFilters.cookTime?.length || 0) +
-    (localFilters.cuisine?.length || 0) +
     (localFilters.nutrition?.length || 0) +
     (localFilters.ingredients?.length || 0) +
     (localFilters.applyPreferences ? 1 : 0) +
@@ -309,12 +307,6 @@ export default function RecipeFilterSheet({ visible, filters, onApply, onClose }
             selected={localFilters.cookTime}
             onToggle={(v) => toggleChip('cookTime', v)}
             initialCount={3}
-          />
-          <FilterSection
-            title="Cuisine"
-            options={RECIPE_FILTER_OPTIONS.cuisine}
-            selected={localFilters.cuisine}
-            onToggle={(v) => toggleChip('cuisine', v)}
           />
           <FilterSection
             title="Nutrition"

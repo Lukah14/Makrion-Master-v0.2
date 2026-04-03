@@ -8,15 +8,13 @@ import {
   Sparkles, FileText, SlidersHorizontal, UtensilsCrossed,
 } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
-import {
-  FOOD_DATABASE, RECENT_FOODS, SAVED_FOODS,
-  SUGGESTIONS, FILTER_OPTIONS,
-} from '@/data/foodDatabase';
+import { FILTER_OPTIONS } from '@/data/foodDatabase';
 import { getCategoryIcon } from '@/components/recipes/foodCategoryIcons';
-import { buildLocalFoodModel, buildFoodModelFromSearch } from '@/lib/servingUtils';
+import { buildFoodModelFromSearch } from '@/lib/servingUtils';
 import { useAuth } from '@/context/AuthContext';
 import { useMyFoods } from '@/hooks/useMyFoods';
-import { useFoodLog } from '@/hooks/useFoodLog';
+import { useSavedFoods } from '@/hooks/useSavedFoods';
+import { todayDateKey } from '@/lib/dateKey';
 import { myFoodToSearchModel } from '@/services/foodService';
 import FilterSheet from './FilterSheet';
 import AddToLogSheet from './AddToLogSheet';
@@ -39,11 +37,6 @@ async function searchFatSecret(query, page = 0) {
 const TOP_TABS = ['All', 'My foods', 'Saved foods'];
 const FILTER_KEYS = ['category', 'calories', 'protein', 'carbs', 'fat', 'diet', 'brand', 'source', 'sort'];
 const EMPTY_FILTERS = Object.fromEntries(FILTER_KEYS.map((k) => [k, []]));
-
-function todayDateString() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
 
 function useDebounce(value, delay = 300) {
   const [debounced, setDebounced] = useState(value);
@@ -219,6 +212,15 @@ function MyFoodsTab({ myFoods, onAddPress, onFoodPress, onCreate }) {
     );
   }
 
+  if (myFoods.error && myFoods.foods.length === 0) {
+    return (
+      <View style={styles.emptyState}>
+        <Text style={styles.emptyTitle}>Could not load My foods</Text>
+        <Text style={styles.emptySubtitle}>{myFoods.error}</Text>
+      </View>
+    );
+  }
+
   if (myFoods.foods.length === 0) {
     return <MyFoodsEmptyState onCreate={onCreate} />;
   }
@@ -281,14 +283,14 @@ function MyFoodsTab({ myFoods, onAddPress, onFoodPress, onCreate }) {
   );
 }
 
-export default function FoodSearchView() {
+export default function FoodSearchView({ initialMealType, onFoodLogged, addEntry: parentAddEntry, logDateKey }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
 
   const { user } = useAuth();
   const myFoods = useMyFoods();
-  const today = todayDateString();
-  const foodLog = useFoodLog(today);
+  const savedFoodsHook = useSavedFoods();
+  const savedFoodsList = savedFoodsHook.searchModels;
 
   const [topTab, setTopTab] = useState('All');
   const [query, setQuery] = useState('');
@@ -357,11 +359,6 @@ export default function FoodSearchView() {
 
   const hasActiveFilters = FILTER_KEYS.some((k) => (filters[k] || []).length > 0);
 
-  const getFood = (id) => {
-    const raw = FOOD_DATABASE.find((f) => f.id === id);
-    return raw ? buildLocalFoodModel(raw) : null;
-  };
-
   const handleAddPress = (food) => {
     setSelectedFood(food);
     setAddSheetOpen(true);
@@ -383,6 +380,11 @@ export default function FoodSearchView() {
       showToast('Please sign in to log food');
       return;
     }
+    if (!parentAddEntry) {
+      console.error('[FoodSearch] addEntry prop is missing');
+      showToast('Unable to save — try again');
+      return;
+    }
     try {
       const food = payload.food;
       const per100g = food.servings?.[0]?.per100g || null;
@@ -391,6 +393,11 @@ export default function FoodSearchView() {
       const grams = payload.serving?.isGramServing
         ? payload.quantity
         : (payload.serving?.metricAmount || 100) * payload.quantity;
+
+      if (!grams || grams <= 0) {
+        showToast('Please enter a valid amount');
+        return;
+      }
 
       const foodForLog = {
         id: food.id,
@@ -412,10 +419,15 @@ export default function FoodSearchView() {
       };
 
       const mealType = (payload.mealType || 'Breakfast').toLowerCase();
-      await foodLog.addEntry(foodForLog, mealType, grams);
-      showToast('Food logged');
+
+      await parentAddEntry(foodForLog, mealType, grams);
+      const dayNote =
+        logDateKey && logDateKey !== todayDateKey() ? ` for ${logDateKey}` : '';
+      showToast(`Food logged${dayNote}`);
+      onFoodLogged?.();
     } catch (err) {
-      showToast('Failed to log food');
+      console.error('[FoodSearch] save failed:', err);
+      showToast('Failed to log food: ' + (err.message || 'unknown error'));
     }
   };
 
@@ -428,6 +440,10 @@ export default function FoodSearchView() {
     if (!user) {
       showToast('Please sign in to log food');
       throw new Error('Not signed in');
+    }
+    if (!parentAddEntry) {
+      showToast('Unable to save — try again');
+      throw new Error('addEntry prop missing');
     }
     const manualFood = {
       id: `manual_${Date.now()}`,
@@ -442,8 +458,11 @@ export default function FoodSearchView() {
       servingGrams: 100,
       source: 'manual',
     };
-    await foodLog.addEntry(manualFood, meal, 100);
-    showToast(`${cal} kcal added to ${meal}`);
+    await parentAddEntry(manualFood, meal, 100);
+    const dayNote =
+      logDateKey && logDateKey !== todayDateKey() ? ` (${logDateKey})` : '';
+    showToast(`${cal} kcal added to ${meal}${dayNote}`);
+    onFoodLogged?.();
   };
 
   const handleCreateFood = async (foodData) => {
@@ -459,13 +478,25 @@ export default function FoodSearchView() {
     }
   };
 
-  const getPer100g = (food) =>
-    food.nutritionPer100g || {
-      calories: food.calories,
-      protein: food.protein,
-      carbs: food.carbs,
-      fat: food.fat,
+  const getPer100g = (food) => {
+    if (food.nutritionPer100g) return food.nutritionPer100g;
+    if (food.per100g) return {
+      calories: food.per100g.kcal ?? food.per100g.calories ?? 0,
+      protein: food.per100g.protein ?? 0,
+      carbs: food.per100g.carbs ?? food.per100g.carbohydrate ?? 0,
+      fat: food.per100g.fat ?? 0,
     };
+    if (food.servings?.length > 0) {
+      const donor = food.servings.find((s) => s.per100g) || food.defaultServing;
+      if (donor?.per100g) return {
+        calories: donor.per100g.calories ?? 0,
+        protein: donor.per100g.protein ?? 0,
+        carbs: donor.per100g.carbohydrate ?? donor.per100g.carbs ?? 0,
+        fat: donor.per100g.fat ?? 0,
+      };
+    }
+    return { calories: food.calories || 0, protein: food.protein || 0, carbs: food.carbs || 0, fat: food.fat || 0 };
+  };
 
   const applyClientFilters = (results) => {
     let res = [...results];
@@ -545,10 +576,6 @@ export default function FoodSearchView() {
   const results = applyClientFilters(apiResults);
   const hasResults = results.length > 0;
 
-  const suggestions = SUGGESTIONS.map(getFood).filter(Boolean);
-  const recentFoods = RECENT_FOODS.map(getFood).filter(Boolean);
-  const savedFoods = SAVED_FOODS.map(getFood).filter(Boolean);
-
   if (showCreateForm) {
     return (
       <CreateFoodForm
@@ -564,6 +591,10 @@ export default function FoodSearchView() {
       <FoodDetailScreen
         food={detailFood}
         onBack={() => setDetailFood(null)}
+        onAddToLog={(food) => {
+          setDetailFood(null);
+          handleAddPress(food);
+        }}
       />
     );
   }
@@ -649,56 +680,66 @@ export default function FoodSearchView() {
           >
             {topTab === 'All' && !isSearching && (
               <>
-                <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>Suggestions</Text>
-                  {suggestions.map((food) => (
-                    <SuggestionCard key={food.id} food={food} onPress={handleFoodPress} onAdd={handleAddPress} />
-                  ))}
-                </View>
-
-                {recentFoods.length > 0 && (
-                  <View style={styles.section}>
-                    <View style={styles.sectionHeaderRow}>
-                      <Text style={styles.sectionTitle}>Recent</Text>
-                      <TouchableOpacity activeOpacity={0.7}>
-                        <Text style={styles.seeAll}>See all</Text>
-                      </TouchableOpacity>
-                    </View>
-                    {recentFoods.map((food) => (
-                      <SuggestionCard key={food.id} food={food} onPress={handleFoodPress} onAdd={handleAddPress} />
-                    ))}
+                {savedFoodsHook.loading && savedFoodsList.length === 0 ? (
+                  <View style={styles.loadingState}>
+                    <ActivityIndicator size="small" color={Colors.primary} />
+                    <Text style={styles.loadingText}>Loading saved foods…</Text>
                   </View>
-                )}
-
-                {savedFoods.length > 0 && (
+                ) : null}
+                {savedFoodsHook.error ? (
+                  <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Saved foods</Text>
+                    <View style={styles.emptyState}>
+                      <Text style={styles.emptyTitle}>Could not load saved foods</Text>
+                      <Text style={styles.emptySubtitle}>{savedFoodsHook.error}</Text>
+                    </View>
+                  </View>
+                ) : null}
+                {savedFoodsList.length > 0 && (
                   <View style={styles.section}>
                     <View style={styles.sectionHeaderRow}>
                       <Text style={styles.sectionTitle}>Saved foods</Text>
-                      <TouchableOpacity activeOpacity={0.7}>
+                      <TouchableOpacity activeOpacity={0.7} onPress={() => setTopTab('Saved foods')}>
                         <Text style={styles.seeAll}>See all</Text>
                       </TouchableOpacity>
                     </View>
-                    {savedFoods.map((food) => (
+                    {savedFoodsList.slice(0, 6).map((food) => (
                       <SuggestionCard key={food.id} food={food} onPress={handleFoodPress} onAdd={handleAddPress} />
                     ))}
                   </View>
                 )}
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Search foods</Text>
+                  <Text style={[styles.emptySubtitle, { marginBottom: 4 }]}>
+                    Use the search bar for FatSecret results, or open My foods for items you created.
+                  </Text>
+                </View>
               </>
             )}
 
             {topTab === 'Saved foods' && !isSearching && (
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>Saved foods</Text>
-                {savedFoods.length > 0 ? (
-                  savedFoods.map((food) => (
+                {savedFoodsHook.loading && savedFoodsList.length === 0 ? (
+                  <View style={styles.loadingState}>
+                    <ActivityIndicator size="small" color={Colors.primary} />
+                    <Text style={styles.loadingText}>Loading…</Text>
+                  </View>
+                ) : savedFoodsHook.error ? (
+                  <View style={styles.emptyState}>
+                    <Text style={styles.emptyTitle}>Could not load</Text>
+                    <Text style={styles.emptySubtitle}>{savedFoodsHook.error}</Text>
+                  </View>
+                ) : savedFoodsList.length > 0 ? (
+                  savedFoodsList.map((food) => (
                     <SuggestionCard key={food.id} food={food} onPress={handleFoodPress} onAdd={handleAddPress} />
                   ))
                 ) : (
                   <View style={styles.emptyState}>
-                    <Text style={styles.emptyIcon}>❤️</Text>
+                    <Text style={styles.emptyIcon}>🔖</Text>
                     <Text style={styles.emptyTitle}>No saved foods yet</Text>
                     <Text style={styles.emptySubtitle}>
-                      Foods you save will appear here for quick access.
+                      Tap the bookmark on food details to save foods for quick access.
                     </Text>
                   </View>
                 )}
@@ -762,6 +803,7 @@ export default function FoodSearchView() {
         food={selectedFood}
         onAdd={handleConfirmAdd}
         onClose={() => setAddSheetOpen(false)}
+        initialMealType={initialMealType}
       />
 
       <ManualAddSheet

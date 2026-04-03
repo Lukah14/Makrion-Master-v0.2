@@ -5,14 +5,7 @@ import {
 } from 'react-native';
 import { Scale, CalendarDays, AlertCircle } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
-
-function formatToday() {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-}
+import { todayDateKey } from '@/lib/dateKey';
 
 function formatDisplay(dateStr) {
   const d = new Date(dateStr + 'T12:00:00');
@@ -24,13 +17,13 @@ function formatDisplay(dateStr) {
   });
 }
 
-export default function UpdateProgressSheet({ visible, lastWeight, onSave, onClose }) {
+export default function UpdateProgressSheet({ visible, lastWeight, onSave, onClose, dateKey }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
   const [weight, setWeight] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const today = formatToday();
+  const logDateKey = dateKey || todayDateKey();
 
   const handleSave = async () => {
     setError('');
@@ -46,7 +39,7 @@ export default function UpdateProgressSheet({ visible, lastWeight, onSave, onClo
 
     setSaving(true);
     try {
-      await onSave(val, today);
+      await onSave(val, logDateKey);
       setWeight('');
       onClose();
     } catch (e) {
@@ -73,7 +66,7 @@ export default function UpdateProgressSheet({ visible, lastWeight, onSave, onClo
 
           <View style={styles.dateRow}>
             <CalendarDays size={16} color={Colors.textTertiary} />
-            <Text style={styles.dateText}>{formatDisplay(today)}</Text>
+            <Text style={styles.dateText}>{formatDisplay(logDateKey)}</Text>
           </View>
 
           <View style={styles.inputSection}>

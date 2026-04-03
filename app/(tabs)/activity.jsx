@@ -1,20 +1,24 @@
 import { useState } from 'react';
 import { ScrollView, View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Flame, Clock, Footprints, Plus, Search } from 'lucide-react-native';
+import { Flame, Clock, Footprints, Plus, Dumbbell } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
+import { useNutritionDate } from '@/context/NutritionDateContext';
 import { Layout } from '@/constants/layout';
+import CalendarModal from '@/components/calendar/CalendarModal';
+import SelectedDateBar from '@/components/calendar/SelectedDateBar';
+import { todayDateKey } from '@/lib/dateKey';
 import ProgressRing from '@/components/common/ProgressRing';
 import StrikeBadge from '@/components/common/StrikeBadge';
+import EmptyState from '@/components/common/EmptyState';
 import TodayPage from '@/components/activity/TodayPage';
 import ExercisePage from '@/components/activity/ExercisePage';
 import PlanPage from '@/components/activity/PlanPage';
 import { isActivityStrikeComplete, countStreak } from '@/lib/strikeHelpers';
-import { activityData } from '@/data/mockData';
+import { useActivityLog } from '@/hooks/useActivityLog';
 
 const TABS = ['Today', 'Exercise', 'Plan'];
-
-function ActivitySummaryBar() {
+function ActivitySummaryBar({ data }) {
   const { colors: Colors } = useTheme();
   const s = createS(Colors);
   return (
@@ -23,13 +27,13 @@ function ActivitySummaryBar() {
         <ProgressRing
           radius={30}
           strokeWidth={5}
-          progress={activityData.caloriesBurned / 500}
+          progress={data.caloriesBurned / 500}
           color={Colors.calories}
           bgColor={Colors.border}
         >
           <Flame size={13} color={Colors.calories} />
         </ProgressRing>
-        <Text style={s.summaryBarValue}>{activityData.caloriesBurned}</Text>
+        <Text style={s.summaryBarValue}>{data.caloriesBurned}</Text>
         <Text style={s.summaryBarLabel}>kcal</Text>
       </View>
       <View style={s.summaryBarDivider} />
@@ -37,13 +41,13 @@ function ActivitySummaryBar() {
         <ProgressRing
           radius={30}
           strokeWidth={5}
-          progress={activityData.activeMinutes / 60}
+          progress={data.activeMinutes / 60}
           color={Colors.primary}
           bgColor={Colors.border}
         >
           <Clock size={13} color={Colors.primary} />
         </ProgressRing>
-        <Text style={s.summaryBarValue}>{activityData.activeMinutes}</Text>
+        <Text style={s.summaryBarValue}>{data.activeMinutes}</Text>
         <Text style={s.summaryBarLabel}>min</Text>
       </View>
       <View style={s.summaryBarDivider} />
@@ -51,13 +55,13 @@ function ActivitySummaryBar() {
         <ProgressRing
           radius={30}
           strokeWidth={5}
-          progress={activityData.steps / activityData.stepsGoal}
+          progress={data.stepsGoal > 0 ? data.steps / data.stepsGoal : 0}
           color={Colors.fat}
           bgColor={Colors.border}
         >
           <Footprints size={13} color={Colors.fat} />
         </ProgressRing>
-        <Text style={s.summaryBarValue}>{activityData.steps.toLocaleString()}</Text>
+        <Text style={s.summaryBarValue}>{data.steps.toLocaleString()}</Text>
         <Text style={s.summaryBarLabel}>steps</Text>
       </View>
     </View>
@@ -87,6 +91,18 @@ export default function ActivityScreen() {
   const { colors: Colors } = useTheme();
   const s = createS(Colors);
   const [activeTab, setActiveTab] = useState('Today');
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const { dateKey } = useNutritionDate();
+  const activityLog = useActivityLog(dateKey);
+  const today = todayDateKey();
+
+  const activityData = {
+    caloriesBurned: activityLog.totalCaloriesBurned || 0,
+    activeMinutes: activityLog.entries.reduce((sum, e) => sum + (e.durationMinutes || 0), 0),
+    steps: 0,
+    stepsGoal: 10000,
+    stepProgress: 0,
+  };
 
   const ACTIVITY_BURN_TARGET = 500;
   const todayComplete = isActivityStrikeComplete({
@@ -106,17 +122,30 @@ export default function ActivityScreen() {
         <View style={s.pageHeader}>
           <Text style={s.screenTitle}>Activity</Text>
           <View style={s.headerActions}>
-            <StrikeBadge count={strikeCount} color={Colors.primary} />
-            <TouchableOpacity style={s.headerIconBtn} activeOpacity={0.7}>
-              <Search size={20} color={Colors.textPrimary} />
-            </TouchableOpacity>
+            <StrikeBadge count={strikeCount} color="#FFD60A" />
           </View>
         </View>
 
-        <ActivitySummaryBar />
+        <SelectedDateBar
+          dateKey={dateKey}
+          onOpenCalendar={() => setCalendarOpen(true)}
+          subtitle={dateKey === today ? 'Activity for today' : 'Activity for selected day'}
+        />
+
+        <ActivitySummaryBar data={activityData} />
         <SubNav active={activeTab} onChange={setActiveTab} />
 
-        {activeTab === 'Today' && <TodayPage />}
+        {activeTab === 'Today' && (
+          activityLog.entries.length === 0 && !activityLog.loading ? (
+            <EmptyState
+              icon={Dumbbell}
+              title="No activity logged today"
+              message="Start tracking your workouts and daily movement"
+            />
+          ) : (
+            <TodayPage />
+          )
+        )}
         {activeTab === 'Exercise' && <ExercisePage />}
         {activeTab === 'Plan' && <PlanPage />}
 
@@ -128,6 +157,8 @@ export default function ActivityScreen() {
           <Plus size={24} color={Colors.onPrimary} />
         </TouchableOpacity>
       )}
+
+      <CalendarModal visible={calendarOpen} onClose={() => setCalendarOpen(false)} />
     </SafeAreaView>
   );
 }
@@ -151,13 +182,6 @@ const createS = (Colors) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-  },
-  headerIconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   summaryBar: {
     flexDirection: 'row',

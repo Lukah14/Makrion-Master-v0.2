@@ -1,15 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, TextInput,
-  StyleSheet, Image, ActivityIndicator, Platform, Modal, Pressable,
+  StyleSheet, Image, ActivityIndicator, Platform, Modal, Pressable, Alert,
 } from 'react-native';
 import Svg, { Circle, G } from 'react-native-svg';
 import {
-  ArrowLeft, Heart, Share2, Sparkles,
+  ArrowLeft, Bookmark,
   Footprints, PersonStanding, Bike, Flame,
-  ChevronDown, Minus, Plus, BookmarkPlus, Check,
+  ChevronDown, Minus, Plus, Check,
 } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
+import { useSavedFoods } from '@/hooks/useSavedFoods';
 import { getCategoryIcon } from '@/components/recipes/foodCategoryIcons';
 import NutritionFacts from '@/components/recipes/NutritionFacts';
 import {
@@ -232,11 +233,47 @@ function computeNutrition(serving, quantity) {
   };
 }
 
-export default function FoodDetailScreen({ food: initialFood, onBack }) {
+function ensureGramServing(servingsList) {
+  if (!servingsList || servingsList.length === 0) return servingsList;
+  if (servingsList.some((s) => s.isGramServing)) return servingsList;
+
+  const donor = servingsList.find((s) => s.per100g) || servingsList[0];
+  if (!donor) return servingsList;
+
+  let per100g = donor.per100g;
+  if (!per100g && donor.metricAmount > 0) {
+    const grams = donor.metricUnit === 'oz' ? donor.metricAmount * 28.3495 : donor.metricAmount;
+    if (grams > 0) {
+      const f = 100 / grams;
+      per100g = {};
+      for (const k of Object.keys(donor.nutrition)) per100g[k] = round1(donor.nutrition[k] * f);
+    }
+  }
+  if (!per100g) return servingsList;
+
+  return [
+    {
+      id: 'synthetic_100g',
+      description: '100g',
+      numberOfUnits: 100,
+      metricAmount: 100,
+      metricUnit: 'g',
+      isDefault: false,
+      isGramServing: true,
+      nutrition: per100g,
+      per100g,
+      displayLabel: 'grams',
+    },
+    ...servingsList,
+  ];
+}
+
+export default function FoodDetailScreen({ food: initialFood, onBack, onAddToLog }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
+  const { isFoodSaved, toggleSaveFood } = useSavedFoods();
 
-  const [servings, setServings] = useState(initialFood.servings || []);
+  const [servings, setServings] = useState(() => ensureGramServing(initialFood.servings || []));
   const [selectedServing, setSelectedServing] = useState(
     initialFood.defaultServing || (initialFood.servings ? selectBestServing(initialFood.servings) : null)
   );
@@ -246,7 +283,6 @@ export default function FoodDetailScreen({ food: initialFood, onBack }) {
     return best.isGramServing ? 100 : 1;
   });
   const [loading, setLoading] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
 
   useEffect(() => {
@@ -326,8 +362,9 @@ export default function FoodDetailScreen({ food: initialFood, onBack }) {
             };
           });
 
-          setServings(normalized);
-          const best = selectBestServing(normalized);
+          const withGram = ensureGramServing(normalized);
+          setServings(withGram);
+          const best = selectBestServing(withGram);
           if (best) {
             setSelectedServing(best);
             setQuantity(best.isGramServing ? 100 : 1);
@@ -384,6 +421,48 @@ export default function FoodDetailScreen({ food: initialFood, onBack }) {
 
   const servingLabel = selectedServing?.displayLabel || initialFood.servingText || '1 serving';
 
+  const buildFoodForFavorite = useCallback(() => {
+    let per100g = { kcal: 0, protein: 0, carbs: 0, fat: 0 };
+    const donor = selectedServing;
+    if (donor?.per100g) {
+      const p = donor.per100g;
+      per100g = {
+        kcal: p.calories ?? p.kcal ?? 0,
+        protein: p.protein ?? 0,
+        carbs: p.carbohydrate ?? p.carbs ?? 0,
+        fat: p.fat ?? 0,
+      };
+    } else if (initialFood.per100g) {
+      const p = initialFood.per100g;
+      per100g = {
+        kcal: p.kcal ?? p.calories ?? 0,
+        protein: p.protein ?? 0,
+        carbs: p.carbs ?? p.carbohydrate ?? 0,
+        fat: p.fat ?? 0,
+      };
+    }
+    const servingGrams = initialFood.servingGrams || donor?.metricAmount || 100;
+    return {
+      id: initialFood.id,
+      name: initialFood.name,
+      brand: initialFood.brand || '',
+      category: initialFood.category || '',
+      per100g,
+      servingGrams,
+      source: initialFood.source || 'fatsecret',
+    };
+  }, [initialFood, selectedServing]);
+
+  const bookmarked = isFoodSaved(initialFood.id);
+
+  const handleBookmark = async () => {
+    try {
+      await toggleSaveFood(buildFoodForFavorite());
+    } catch (e) {
+      Alert.alert('Error', e?.message || 'Could not update saved foods');
+    }
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.topBar}>
@@ -391,14 +470,9 @@ export default function FoodDetailScreen({ food: initialFood, onBack }) {
           <ArrowLeft size={22} color={Colors.textPrimary} />
         </TouchableOpacity>
         <Text style={styles.topBarTitle} numberOfLines={1}>Food Details</Text>
-        <View style={styles.topBarRight}>
-          <TouchableOpacity style={styles.iconBtn} onPress={() => setSaved(!saved)} activeOpacity={0.7}>
-            <Heart size={20} color={saved ? '#FF6B6B' : Colors.textSecondary} fill={saved ? '#FF6B6B' : 'transparent'} />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.iconBtn} activeOpacity={0.7}>
-            <Share2 size={20} color={Colors.textSecondary} />
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity style={styles.iconBtn} onPress={handleBookmark} activeOpacity={0.7}>
+          <Bookmark size={20} color={bookmarked ? Colors.textPrimary : Colors.textSecondary} fill={bookmarked ? Colors.textPrimary : 'transparent'} />
+        </TouchableOpacity>
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -477,31 +551,15 @@ export default function FoodDetailScreen({ food: initialFood, onBack }) {
           <NutritionFacts recipe={nutritionFactsData} />
         </View>
 
-        <TouchableOpacity style={styles.aiCta} activeOpacity={0.85}>
-          <Sparkles size={18} color={Colors.textPrimary} />
-          <View style={styles.aiCtaText}>
-            <Text style={styles.aiCtaTitle}>AI Nutrition Helper</Text>
-            <Text style={styles.aiCtaSubtitle}>Get personalized insights about this food</Text>
-          </View>
-          <ChevronDown size={18} color={Colors.textTertiary} style={{ transform: [{ rotate: '-90deg' }] }} />
-        </TouchableOpacity>
-
-        <View style={styles.actionRow}>
-          <TouchableOpacity style={styles.actionBtn} activeOpacity={0.7}>
-            <BookmarkPlus size={16} color={Colors.textSecondary} />
-            <Text style={styles.actionBtnText}>Save Food</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.actionBtn} activeOpacity={0.7}>
-            <Share2 size={16} color={Colors.textSecondary} />
-            <Text style={styles.actionBtnText}>Report Food</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={{ height: 40 }} />
+        <View style={{ height: 24 }} />
       </ScrollView>
 
       <View style={styles.bottomBar}>
-        <TouchableOpacity style={styles.addToLogBtn} activeOpacity={0.85}>
+        <TouchableOpacity
+          style={styles.addToLogBtn}
+          activeOpacity={0.85}
+          onPress={() => onAddToLog?.(initialFood)}
+        >
           <Plus size={20} color={Colors.onPrimary} strokeWidth={2.5} />
           <Text style={styles.addToLogText}>Add to Food Log</Text>
         </TouchableOpacity>
@@ -534,7 +592,6 @@ const createStyles = (Colors) => StyleSheet.create({
     flex: 1, fontSize: 17, fontFamily: 'PlusJakartaSans-SemiBold',
     color: Colors.textPrimary, textAlign: 'center', marginHorizontal: 8,
   },
-  topBarRight: { flexDirection: 'row', gap: 4 },
   iconBtn: {
     width: 40, height: 40, borderRadius: 20, backgroundColor: Colors.background,
     alignItems: 'center', justifyContent: 'center',
@@ -626,21 +683,7 @@ const createStyles = (Colors) => StyleSheet.create({
   burnAmount: { fontSize: 16, fontFamily: 'PlusJakartaSans-Bold', color: Colors.textPrimary },
   burnUnit: { fontSize: 11, fontFamily: 'PlusJakartaSans-Medium', color: Colors.textTertiary, marginTop: 1 },
   burnLabel: { fontSize: 11, fontFamily: 'PlusJakartaSans-Regular', color: Colors.textTertiary, marginTop: 2 },
-  nutritionFactsWrap: { marginBottom: 24 },
-  aiCta: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.cardBackground, borderRadius: 16,
-    padding: 16, borderWidth: 1, borderColor: Colors.border, marginBottom: 16, gap: 12,
-  },
-  aiCtaText: { flex: 1 },
-  aiCtaTitle: { fontSize: 15, fontFamily: 'PlusJakartaSans-SemiBold', color: Colors.textPrimary },
-  aiCtaSubtitle: { fontSize: 12, fontFamily: 'PlusJakartaSans-Regular', color: Colors.textTertiary, marginTop: 2 },
-  actionRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
-  actionBtn: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 8, paddingVertical: 14, borderRadius: 14, borderWidth: 1.5,
-    borderColor: Colors.border, backgroundColor: Colors.cardBackground,
-  },
-  actionBtnText: { fontSize: 14, fontFamily: 'PlusJakartaSans-SemiBold', color: Colors.textSecondary },
+  nutritionFactsWrap: { marginBottom: 0 },
   bottomBar: {
     paddingHorizontal: 20, paddingTop: 12, paddingBottom: Platform.OS === 'ios' ? 32 : 16,
     backgroundColor: Colors.cardBackground, borderTopWidth: 1, borderTopColor: Colors.border,

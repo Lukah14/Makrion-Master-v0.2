@@ -1,5 +1,4 @@
-import { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import Svg, { Defs, ClipPath, Path, LinearGradient, Stop, Rect, Ellipse, Line, G } from 'react-native-svg';
 import { Droplets } from 'lucide-react-native';
 import Card from '@/components/common/Card';
@@ -12,7 +11,7 @@ function WaterGlass({ fillPercent, idx, strokeColor }) {
   const iBot = 72;
   const iH = iBot - iTop;
 
-  const fillH = iH * pct / 100;
+  const fillH = (iH * pct) / 100;
   const fillY = iBot - fillH;
 
   const stroke = strokeColor;
@@ -49,26 +48,32 @@ function WaterGlass({ fillPercent, idx, strokeColor }) {
         </G>
       )}
 
-      <Line x1="5"  y1="11" x2="13" y2="74" stroke={stroke} strokeWidth="4.5" strokeLinecap="round" />
+      <Line x1="5" y1="11" x2="13" y2="74" stroke={stroke} strokeWidth="4.5" strokeLinecap="round" />
       <Line x1="55" y1="11" x2="47" y2="74" stroke={stroke} strokeWidth="4.5" strokeLinecap="round" />
-      <Ellipse cx="30" cy="11" rx="25" ry="8"   stroke={stroke} strokeWidth="4.5" fill="none" />
-      <Ellipse cx="30" cy="11" rx="20" ry="5.5" stroke={stroke} strokeWidth="2"   fill="none" opacity="0.45" />
-      <Ellipse cx="30" cy="74" rx="17" ry="5"   stroke={stroke} strokeWidth="4.5" fill="none" />
+      <Ellipse cx="30" cy="11" rx="25" ry="8" stroke={stroke} strokeWidth="4.5" fill="none" />
+      <Ellipse cx="30" cy="11" rx="20" ry="5.5" stroke={stroke} strokeWidth="2" fill="none" opacity="0.45" />
+      <Ellipse cx="30" cy="74" rx="17" ry="5" stroke={stroke} strokeWidth="4.5" fill="none" />
     </Svg>
   );
 }
 
-export default function WaterTracker({ consumed, target }) {
+const SLOT_COUNT = 6;
+
+/**
+ * @param {{ glasses: number, totalMl: number, targetLiters: number, loading?: boolean, onGlassSlotPress: (slotIndex: number) => Promise<void>, onDeltaMl: (deltaMl: number) => Promise<void> }} props
+ */
+export default function WaterTracker({
+  glasses,
+  totalMl,
+  targetLiters,
+  loading = false,
+  onGlassSlotPress,
+  onDeltaMl,
+}) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
-  const [glasses, setGlasses] = useState(Math.round((consumed / target) * 6));
-  const totalGlasses = 6;
-  const currentL = ((glasses / totalGlasses) * target).toFixed(2);
-
-  const addWater = (amount) => {
-    const glassEquiv = Math.round((amount / 1000) / (target / totalGlasses));
-    setGlasses(Math.max(0, Math.min(totalGlasses, glasses + glassEquiv)));
-  };
+  const displayGlasses = Math.min(glasses, SLOT_COUNT);
+  const currentL = (totalMl / 1000).toFixed(2);
 
   return (
     <Card>
@@ -77,19 +82,24 @@ export default function WaterTracker({ consumed, target }) {
           <Droplets size={20} color={Colors.water} />
           <Text style={styles.title}>Water</Text>
         </View>
-        <Text style={[styles.count, { color: Colors.primary }]}>
-          {currentL}L / {target}L
-        </Text>
+        {loading ? (
+          <ActivityIndicator size="small" color={Colors.primary} />
+        ) : (
+          <Text style={[styles.count, { color: Colors.primary }]}>
+            {currentL}L / {targetLiters}L
+          </Text>
+        )}
       </View>
 
       <View style={styles.glassesRow}>
-        {Array.from({ length: totalGlasses }).map((_, i) => (
+        {Array.from({ length: SLOT_COUNT }).map((_, i) => (
           <TouchableOpacity
             key={i}
-            onPress={() => setGlasses(i < glasses ? i : i + 1)}
+            onPress={() => onGlassSlotPress(i)}
             activeOpacity={0.7}
+            disabled={loading}
           >
-            <WaterGlass fillPercent={i < glasses ? 100 : 0} idx={i} strokeColor={Colors.textPrimary} />
+            <WaterGlass fillPercent={i < displayGlasses ? 100 : 0} idx={i} strokeColor={Colors.textPrimary} />
           </TouchableOpacity>
         ))}
       </View>
@@ -97,29 +107,33 @@ export default function WaterTracker({ consumed, target }) {
       <View style={styles.buttonsRow}>
         <TouchableOpacity
           style={[styles.waterButton, styles.waterButtonOutline]}
-          onPress={() => addWater(-250)}
+          onPress={() => onDeltaMl(-250)}
           activeOpacity={0.7}
+          disabled={loading}
         >
           <Text style={styles.waterButtonTextDark}>- 250</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.waterButton, styles.waterButtonTeal]}
-          onPress={() => addWater(250)}
+          onPress={() => onDeltaMl(250)}
           activeOpacity={0.7}
+          disabled={loading}
         >
           <Text style={styles.waterButtonTextColor}>+250</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.waterButton, styles.waterButtonTeal]}
-          onPress={() => addWater(500)}
+          onPress={() => onDeltaMl(500)}
           activeOpacity={0.7}
+          disabled={loading}
         >
           <Text style={styles.waterButtonTextColor}>+500</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.waterButton, styles.waterButtonTeal]}
-          onPress={() => addWater(750)}
+          onPress={() => onDeltaMl(750)}
           activeOpacity={0.7}
+          disabled={loading}
         >
           <Text style={styles.waterButtonTextColor}>+750</Text>
         </TouchableOpacity>

@@ -2,6 +2,7 @@ import { Tabs } from 'expo-router';
 import { View, Image, StyleSheet, Platform } from 'react-native';
 import { House } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
+import { NutritionDateProvider } from '@/context/NutritionDateContext';
 
 const NAV_NUTRITION = require('@/src/Nav Icons/Nutrition.png');
 const NAV_ACTIVITY = require('@/src/Nav Icons/Activity.png');
@@ -22,6 +23,7 @@ export default function TabLayout() {
   const { colors, isDark } = useTheme();
 
   return (
+    <NutritionDateProvider>
     <Tabs
       screenOptions={{
         headerShown: false,
@@ -101,6 +103,7 @@ export default function TabLayout() {
         }}
       />
     </Tabs>
+    </NutritionDateProvider>
   );
 }
 

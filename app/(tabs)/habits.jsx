@@ -1,128 +1,155 @@
 import { useState, useCallback } from 'react';
 import { ScrollView, View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Plus, Search } from 'lucide-react-native';
+import { Plus, ClipboardList } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import { Layout } from '@/constants/layout';
-import { allHabitsData, memorableMoments as mockMoments } from '@/data/mockData';
-import DateStrip from '@/components/habits/DateStrip';
+import { useHabits } from '@/hooks/useHabits';
+import { useMemorableMoments } from '@/hooks/useMemorableMoments';
+import { useNutritionDate } from '@/context/NutritionDateContext';
+import CalendarModal from '@/components/calendar/CalendarModal';
+import SelectedDateBar from '@/components/calendar/SelectedDateBar';
+import { todayDateKey } from '@/lib/dateKey';
 import StrikeBadge from '@/components/common/StrikeBadge';
 import HabitSubNav from '@/components/habits/HabitSubNav';
-import { isHabitStrikeComplete, countStreak } from '@/lib/strikeHelpers';
 import TodayView from '@/components/habits/TodayView';
 import HabitsManageView from '@/components/habits/HabitsManageView';
 import AddHabitWizard from '@/components/habits/AddHabitWizard';
 import HabitDetailScreen from '@/components/habits/HabitDetailScreen';
+import EmptyState from '@/components/common/EmptyState';
 
 export default function HabitsScreen() {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
+
+  const { dateKey, bumpCalendarRefresh } = useNutritionDate();
+  const today = todayDateKey();
+  const {
+    habits,
+    completions,
+    loading: habitsLoading,
+    addHabit,
+    editHabit,
+    removeHabit,
+    toggleCompletion,
+    reload: reloadHabits,
+  } = useHabits(dateKey);
+
+  const { moments: firebaseMoments, add: addMoment } = useMemorableMoments(dateKey);
+
   const [activeSubpage, setActiveSubpage] = useState('today');
-  const [selectedDate, setSelectedDate] = useState(new Date());
-  const [habits, setHabits] = useState(allHabitsData);
-  const [moments, setMoments] = useState(mockMoments);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+
+  const moments = firebaseMoments.map((m) => ({
+    id: m.id,
+    text: m.text || '',
+    mood: m.emoji || '✨',
+    moodRating: null,
+    date: m.dateKey || dateKey,
+  }));
   const [showWizard, setShowWizard] = useState(false);
   const [editingHabit, setEditingHabit] = useState(null);
   const [detailHabit, setDetailHabit] = useState(null);
   const [detailInitialTab, setDetailInitialTab] = useState('Calendar');
   const [runningTimers, setRunningTimers] = useState({});
 
-  const activeHabits = habits.filter((h) => !h.isArchived && !h.isPaused);
-  const todayComplete = isHabitStrikeComplete(habits);
-  const totalStreak = countStreak([
-    todayComplete,
-    ...habits.map((h) => (h.streak || 0) > 0),
-  ]);
+  const activeHabits = habits.filter((h) => !h.archived && !h.isArchived);
+  const todayComplete =
+    activeHabits.length > 0 &&
+    activeHabits.every((h) => completions[h.id]?.completed);
 
   const openDetail = useCallback((habit, tab = 'Calendar') => {
     setDetailHabit(habit);
     setDetailInitialTab(tab);
   }, []);
 
-  const toggleHabit = useCallback((id) => {
-    setHabits((prev) =>
-      prev.map((h) => {
-        if (h.id !== id) return h;
-        if (h.type === 'yesno') return { ...h, completed: !h.completed };
-        if (h.type === 'numeric') return { ...h, current: h.current >= h.target ? 0 : h.target, completed: h.current < h.target };
-        if (h.type === 'timer') return { ...h, current: h.current >= h.target ? 0 : h.target, completed: h.current < h.target };
-        return h;
-      })
-    );
-  }, []);
+  const toggleHabit = useCallback(
+    async (id) => {
+      await toggleCompletion(id);
+      bumpCalendarRefresh();
+    },
+    [toggleCompletion, bumpCalendarRefresh],
+  );
 
-  const incrementHabit = useCallback((id) => {
-    setHabits((prev) =>
-      prev.map((h) => {
-        if (h.id !== id || h.type !== 'numeric') return h;
-        const step = h.target >= 100 ? 100 : 1;
-        const next = Math.min(h.current + step, h.target);
-        return { ...h, current: next, completed: next >= h.target };
-      })
-    );
-  }, []);
+  const incrementHabit = useCallback(
+    async (id) => {
+      const habit = habits.find((h) => h.id === id);
+      if (!habit || habit.type !== 'numeric') return;
+      const step = habit.target >= 100 ? 100 : 1;
+      const next = Math.min((habit.current || 0) + step, habit.target);
+      await editHabit(id, { current: next, completed: next >= habit.target });
+      bumpCalendarRefresh();
+    },
+    [habits, editHabit, bumpCalendarRefresh],
+  );
 
-  const decrementHabit = useCallback((id) => {
-    setHabits((prev) =>
-      prev.map((h) => {
-        if (h.id !== id || h.type !== 'numeric') return h;
-        const step = h.target >= 100 ? 100 : 1;
-        const next = Math.max(h.current - step, 0);
-        return { ...h, current: next, completed: next >= h.target };
-      })
-    );
-  }, []);
+  const decrementHabit = useCallback(
+    async (id) => {
+      const habit = habits.find((h) => h.id === id);
+      if (!habit || habit.type !== 'numeric') return;
+      const step = habit.target >= 100 ? 100 : 1;
+      const next = Math.max((habit.current || 0) - step, 0);
+      await editHabit(id, { current: next, completed: next >= habit.target });
+      bumpCalendarRefresh();
+    },
+    [habits, editHabit, bumpCalendarRefresh],
+  );
 
-  const toggleChecklistItem = useCallback((habitId, itemId) => {
-    setHabits((prev) =>
-      prev.map((h) => {
-        if (h.id !== habitId || h.type !== 'checklist') return h;
-        const items = h.checklistItems.map((item) =>
-          item.id === itemId ? { ...item, completed: !item.completed } : item
-        );
-        const completedCount = items.filter((i) => i.completed).length;
-        return {
-          ...h,
-          checklistItems: items,
-          current: completedCount,
-          completed: completedCount >= items.length,
-        };
-      })
-    );
-  }, []);
+  const toggleChecklistItem = useCallback(
+    async (habitId, itemId) => {
+      const habit = habits.find((h) => h.id === habitId);
+      if (!habit || habit.type !== 'checklist') return;
+      const items = habit.checklistItems.map((item) =>
+        item.id === itemId ? { ...item, completed: !item.completed } : item,
+      );
+      const completedCount = items.filter((i) => i.completed).length;
+      await editHabit(habitId, {
+        checklistItems: items,
+        current: completedCount,
+        completed: completedCount >= items.length,
+      });
+      bumpCalendarRefresh();
+    },
+    [habits, editHabit, bumpCalendarRefresh],
+  );
 
-  const startTimer = useCallback((id) => {
-    setRunningTimers((prev) => ({ ...prev, [id]: true }));
-    setHabits((prev) =>
-      prev.map((h) => {
-        if (h.id !== id) return h;
-        return { ...h, current: Math.min(h.current + 1, h.target), completed: h.current + 1 >= h.target };
-      })
-    );
-  }, []);
+  const startTimer = useCallback(
+    async (id) => {
+      setRunningTimers((prev) => ({ ...prev, [id]: true }));
+      const habit = habits.find((h) => h.id === id);
+      if (!habit) return;
+      const next = Math.min((habit.current || 0) + 1, habit.target);
+      await editHabit(id, { current: next, completed: next >= habit.target });
+      bumpCalendarRefresh();
+    },
+    [habits, editHabit, bumpCalendarRefresh],
+  );
 
   const stopTimer = useCallback((id) => {
     setRunningTimers((prev) => ({ ...prev, [id]: false }));
   }, []);
 
-  const resetTimer = useCallback((id) => {
-    setRunningTimers((prev) => ({ ...prev, [id]: false }));
-    setHabits((prev) =>
-      prev.map((h) => (h.id === id ? { ...h, current: 0, completed: false } : h))
-    );
-  }, []);
+  const resetTimer = useCallback(
+    async (id) => {
+      setRunningTimers((prev) => ({ ...prev, [id]: false }));
+      await editHabit(id, { current: 0, completed: false });
+      bumpCalendarRefresh();
+    },
+    [editHabit, bumpCalendarRefresh],
+  );
 
-  const handleSaveHabit = useCallback((habitData) => {
-    setHabits((prev) => {
-      const existing = prev.find((h) => h.id === habitData.id);
-      if (existing) {
-        return prev.map((h) => (h.id === habitData.id ? { ...h, ...habitData } : h));
+  const handleSaveHabit = useCallback(
+    async (habitData) => {
+      if (editingHabit) {
+        await editHabit(editingHabit.id, habitData);
+      } else {
+        await addHabit(habitData);
       }
-      return [...prev, habitData];
-    });
-    setShowWizard(false);
-    setEditingHabit(null);
-  }, []);
+      setShowWizard(false);
+      setEditingHabit(null);
+    },
+    [editingHabit, editHabit, addHabit],
+  );
 
   const handleEditHabit = useCallback((habit) => {
     setEditingHabit(habit);
@@ -130,68 +157,73 @@ export default function HabitsScreen() {
     setDetailHabit(null);
   }, []);
 
-  const handleSaveEditFromDetail = useCallback((updatedHabit) => {
-    setHabits((prev) =>
-      prev.map((h) => (h.id === updatedHabit.id ? { ...h, ...updatedHabit } : h))
-    );
-    setDetailHabit(null);
-  }, []);
+  const handleSaveEditFromDetail = useCallback(
+    async (habitId, changes) => {
+      await editHabit(habitId, changes);
+      setDetailHabit(null);
+    },
+    [editHabit],
+  );
 
-  const handleDuplicateHabit = useCallback((habit) => {
-    const duplicate = {
-      ...habit,
-      id: `h-${Date.now()}`,
-      name: `${habit.name} (copy)`,
-      streak: 0,
-      bestStreak: 0,
-      current: 0,
-      completed: false,
-      completionHistory: [],
-      notes: [],
-    };
-    setHabits((prev) => [...prev, duplicate]);
-  }, []);
+  const handleDuplicateHabit = useCallback(
+    async (habit) => {
+      const { id, ...rest } = habit;
+      await addHabit({ ...rest, name: `${rest.name} (copy)` });
+    },
+    [addHabit],
+  );
 
-  const handleArchiveHabit = useCallback((habit) => {
-    setHabits((prev) =>
-      prev.map((h) => (h.id === habit.id ? { ...h, isArchived: !h.isArchived } : h))
-    );
-    setDetailHabit(null);
-  }, []);
+  const handleArchiveHabit = useCallback(
+    async (habit) => {
+      const habitId = typeof habit === 'string' ? habit : habit.id;
+      await editHabit(habitId, { archived: true });
+      setDetailHabit(null);
+    },
+    [editHabit],
+  );
 
-  const handleDeleteHabit = useCallback((habit) => {
-    setHabits((prev) => prev.filter((h) => h.id !== habit.id));
-    setDetailHabit(null);
-  }, []);
+  const handleDeleteHabit = useCallback(
+    async (habit) => {
+      const habitId = typeof habit === 'string' ? habit : habit.id;
+      await removeHabit(habitId);
+      setDetailHabit(null);
+    },
+    [removeHabit],
+  );
 
-  const handleRestartHabit = useCallback((habit) => {
-    setHabits((prev) =>
-      prev.map((h) =>
-        h.id === habit.id
-          ? { ...h, completionHistory: [], streak: 0, completed: false, current: 0 }
-          : h
-      )
-    );
-  }, []);
+  const handleRestartHabit = useCallback(
+    async (habit) => {
+      const habitId = typeof habit === 'string' ? habit : habit.id;
+      await editHabit(habitId, { paused: false, archived: false });
+    },
+    [editHabit],
+  );
 
-  const handleTogglePause = useCallback((habit) => {
-    setHabits((prev) =>
-      prev.map((h) => (h.id === habit.id ? { ...h, isPaused: !h.isPaused } : h))
-    );
-  }, []);
+  const handleTogglePause = useCallback(
+    async (habit) => {
+      const habitId = typeof habit === 'string' ? habit : habit.id;
+      const found = habits.find((h) => h.id === habitId);
+      if (found) await editHabit(habitId, { paused: !found.paused, isPaused: !found.isPaused });
+    },
+    [habits, editHabit],
+  );
 
-  const handleSaveMoment = useCallback((momentData) => {
-    const newMoment = {
-      id: `m-${Date.now()}`,
-      date: selectedDate.toISOString().split('T')[0],
-      text: momentData.text,
-      mood: getMoodEmoji(momentData.moodRating),
-      type: 'note',
-      moodRating: momentData.moodRating,
-      photoUrl: momentData.photoUrl,
-    };
-    setMoments((prev) => [newMoment, ...prev]);
-  }, [selectedDate]);
+  const handleSaveMoment = useCallback(
+    async (momentData) => {
+      try {
+        await addMoment({
+          type: 'text',
+          text: momentData.text || (momentData.moodRating ? `Mood: ${momentData.moodRating}/10` : ''),
+          emoji: getMoodEmoji(momentData.moodRating),
+          photoUrl: momentData.photoUrl ?? null,
+        });
+        bumpCalendarRefresh();
+      } catch {
+        // optional toast
+      }
+    },
+    [addMoment, bumpCalendarRefresh],
+  );
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -205,14 +237,15 @@ export default function HabitsScreen() {
             {activeSubpage === 'today' ? 'Today' : 'Habits'}
           </Text>
           <View style={styles.headerActions}>
-            <StrikeBadge count={totalStreak} color={Colors.streakFire} />
-            <TouchableOpacity style={styles.headerIconBtn} activeOpacity={0.7}>
-              <Search size={20} color={Colors.textPrimary} />
-            </TouchableOpacity>
+            <StrikeBadge count={todayComplete ? 1 : 0} color="#AF52DE" />
           </View>
         </View>
 
-        <DateStrip selectedDate={selectedDate} onDateChange={setSelectedDate} />
+        <SelectedDateBar
+          dateKey={dateKey}
+          onOpenCalendar={() => setCalendarOpen(true)}
+          subtitle={dateKey === today ? 'Habits for today' : 'Habits for selected day'}
+        />
 
         <HabitSubNav
           activeSubpage={activeSubpage}
@@ -220,21 +253,31 @@ export default function HabitsScreen() {
         />
 
         {activeSubpage === 'today' ? (
-          <TodayView
-            habits={activeHabits}
-            moments={moments}
-            onToggle={toggleHabit}
-            onIncrement={incrementHabit}
-            onDecrement={decrementHabit}
-            onToggleChecklistItem={toggleChecklistItem}
-            onTimerStart={startTimer}
-            onTimerStop={stopTimer}
-            onTimerReset={resetTimer}
-            onHabitLongPress={(habit) => openDetail(habit, 'Calendar')}
-            onAddHabit={() => setShowWizard(true)}
-            onSaveMoment={handleSaveMoment}
-            runningTimers={runningTimers}
-          />
+          activeHabits.length === 0 ? (
+            <EmptyState
+              icon={ClipboardList}
+              title="No habits yet"
+              message="Create your first habit to start tracking"
+              actionLabel="Create Habit"
+              onAction={() => setShowWizard(true)}
+            />
+          ) : (
+            <TodayView
+              habits={activeHabits}
+              moments={moments}
+              onToggle={toggleHabit}
+              onIncrement={incrementHabit}
+              onDecrement={decrementHabit}
+              onToggleChecklistItem={toggleChecklistItem}
+              onTimerStart={startTimer}
+              onTimerStop={stopTimer}
+              onTimerReset={resetTimer}
+              onHabitLongPress={(habit) => openDetail(habit, 'Calendar')}
+              onAddHabit={() => setShowWizard(true)}
+              onSaveMoment={handleSaveMoment}
+              runningTimers={runningTimers}
+            />
+          )
         ) : (
           <HabitsManageView
             habits={habits}
@@ -277,6 +320,8 @@ export default function HabitsScreen() {
           onRestart={handleRestartHabit}
         />
       )}
+
+      <CalendarModal visible={calendarOpen} onClose={() => setCalendarOpen(false)} />
     </SafeAreaView>
   );
 }
@@ -317,13 +362,6 @@ const createStyles = (Colors) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-  },
-  headerIconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   fab: {
     position: 'absolute',
