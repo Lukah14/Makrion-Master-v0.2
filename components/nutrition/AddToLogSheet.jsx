@@ -9,6 +9,7 @@ import { MEAL_TYPES } from '@/data/foodDatabase';
 import {
   selectBestServing,
   getServingDropdownOptions,
+  defaultQuantityForServing,
 } from '@/lib/servingUtils';
 
 function round1(n) {
@@ -91,7 +92,7 @@ export default function AddToLogSheet({ visible, food, onAdd, onClose, initialMe
     if (food && visible) {
       const best = food.defaultServing || selectBestServing(food.servings);
       setSelectedServing(best);
-      setQuantity(best ? (best.isGramServing ? 100 : 1) : 100);
+      setQuantity(best ? defaultQuantityForServing(best) : 100);
     }
   }, [food?.id, visible]);
 
@@ -116,18 +117,25 @@ export default function AddToLogSheet({ visible, food, onAdd, onClose, initialMe
   const isGramMode = hasServings ? selectedServing.isGramServing : true;
   const qtyStep = isGramMode ? 10 : 0.5;
   const qtyMin = isGramMode ? 1 : 0.5;
+  const qtyUnitSuffix = isGramMode && hasServings && selectedServing?.metricUnit === 'ml' ? 'ml' : isGramMode ? 'g' : '';
 
   const decrementQty = () => setQuantity((q) => Math.max(qtyMin, round1(q - qtyStep)));
   const incrementQty = () => setQuantity((q) => round1(q + qtyStep));
 
   const handleServingSelect = (serving) => {
     setSelectedServing(serving);
-    setQuantity(serving.isGramServing ? 100 : 1);
+    setQuantity(defaultQuantityForServing(serving));
   };
 
   const servingLabel = hasServings
     ? selectedServing.displayLabel
     : '100g';
+
+  const loggedGrams = !hasServings
+    ? quantity
+    : selectedServing.isGramServing
+      ? quantity
+      : (selectedServing.metricAmount || 100) * quantity;
 
   const handleAdd = () => {
     onAdd({
@@ -136,6 +144,7 @@ export default function AddToLogSheet({ visible, food, onAdd, onClose, initialMe
       quantity,
       serving: selectedServing,
       servingLabel,
+      loggedGrams,
       calories: nutrition.calories,
       protein: nutrition.protein,
       carbs: nutrition.carbs,
@@ -197,7 +206,7 @@ export default function AddToLogSheet({ visible, food, onAdd, onClose, initialMe
                       selectTextOnFocus
                       selectionColor={Colors.textPrimary}
                     />
-                    {isGramMode && <Text style={styles.qtyUnit}>g</Text>}
+                    {qtyUnitSuffix ? <Text style={styles.qtyUnit}>{qtyUnitSuffix}</Text> : null}
                   </View>
                   <TouchableOpacity onPress={incrementQty} style={styles.qtyBtn} activeOpacity={0.7}>
                     <Plus size={14} color={Colors.textPrimary} strokeWidth={2.5} />

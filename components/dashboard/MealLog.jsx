@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { View, Text, Image, TouchableOpacity, Modal, Pressable, StyleSheet } from 'react-native';
 import { Plus, Flame, Trash2, Pencil } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
+import { num } from '@/lib/num';
 
 const ICON_MORE = require('@/src/Icons/More.png');
 
@@ -21,22 +22,27 @@ function FoodRow({ item, onRemove }) {
   const { colors: Colors } = useTheme();
   const s = createS(Colors);
 
+  const cal = Math.round(num(item.calories));
+  const p = Math.round(num(item.protein) * 10) / 10;
+  const c = Math.round(num(item.carbs) * 10) / 10;
+  const f = Math.round(num(item.fat) * 10) / 10;
+
   return (
     <View style={s.foodRow}>
       <View style={s.foodLeft}>
         <Text style={s.foodName} numberOfLines={1}>{item.name}</Text>
-        <Text style={s.foodAmount}>{item.amount}</Text>
+        <Text style={s.foodAmount}>{item.amount ?? ''}</Text>
       </View>
       <View style={s.foodRight}>
         <View style={s.foodMacroRow}>
-          <Text style={s.foodCalText}>{item.calories}</Text>
+          <Text style={s.foodCalText}>{cal}</Text>
           <Text style={s.foodMacroText}>
             <Text style={s.pLabel}>P</Text>
-            <Text style={s.pVal}>{item.protein} </Text>
+            <Text style={s.pVal}>{p} </Text>
             <Text style={s.cLabel}>C</Text>
-            <Text style={s.cVal}>{item.carbs} </Text>
+            <Text style={s.cVal}>{c} </Text>
             <Text style={s.fLabel}>F</Text>
-            <Text style={s.fVal}>{item.fat}</Text>
+            <Text style={s.fVal}>{f}</Text>
           </Text>
         </View>
         <TouchableOpacity onPress={() => onRemove && onRemove(item.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} activeOpacity={0.7}>
@@ -87,12 +93,10 @@ function MealCard({ meal, onAddFood }) {
     setItems(meal.items || []);
   }, [meal.items]);
 
-  const totalCal = items.reduce((a, i) => a + (i.calories || 0), meal.items.length > 0 ? 0 : meal.totalCalories);
-  const calcFromItems = items.length > 0;
-  const protein = calcFromItems ? items.reduce((a, i) => a + (i.protein || 0), 0) : (meal.macros?.protein || 0);
-  const carbs = calcFromItems ? items.reduce((a, i) => a + (i.carbs || 0), 0) : (meal.macros?.carbs || 0);
-  const fat = calcFromItems ? items.reduce((a, i) => a + (i.fat || 0), 0) : (meal.macros?.fat || 0);
-  const displayCal = calcFromItems ? totalCal : meal.totalCalories;
+  const totalCal = items.reduce((a, i) => a + num(i.calories), 0);
+  const protein = Math.round(items.reduce((a, i) => a + num(i.protein), 0) * 10) / 10;
+  const carbs = Math.round(items.reduce((a, i) => a + num(i.carbs), 0) * 10) / 10;
+  const fat = Math.round(items.reduce((a, i) => a + num(i.fat), 0) * 10) / 10;
 
   const removeItem = (id) => setItems((prev) => prev.filter((i) => i.id !== id));
   const clearMeal = () => setItems([]);
@@ -105,7 +109,7 @@ function MealCard({ meal, onAddFood }) {
             <Text style={s.mealTitle}>{meal.type}</Text>
             <View style={s.calRow}>
               <Flame size={13} color='#F5A623' />
-              <Text style={s.calText}>{displayCal} kcal</Text>
+              <Text style={s.calText}>{Math.round(totalCal)} kcal</Text>
               <Text style={s.dot}> • </Text>
               <Text style={s.macroInline}>
                 <Text style={s.pLabel}>{protein}P</Text>

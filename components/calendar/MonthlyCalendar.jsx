@@ -5,6 +5,8 @@ import { buildMonthGridCells, monthLabel, WEEKDAY_SHORT } from '@/lib/calendarUt
 
 /** Reference-style green ring for days with logged data */
 export const CALENDAR_TRACKED_GREEN = '#2F9D5C';
+/** Logged but goal not met */
+export const CALENDAR_PARTIAL_AMBER = '#D97706';
 const BORDER_LIGHT = '#E8E8E8';
 
 /**
@@ -13,7 +15,7 @@ const BORDER_LIGHT = '#E8E8E8';
  * @param {number} props.monthIndex 0-11
  * @param {string} props.selectedDateKey YYYY-MM-DD
  * @param {(dateKey: string) => void} [props.onSelectDay]
- * @param {Record<string, { hasTrackedData?: boolean, hasMoment?: boolean }>} [props.monthMeta]
+ * @param {Record<string, { hasTrackedData?: boolean, hasMoment?: boolean, completionRing?: 'full' | 'partial' }>} [props.monthMeta]
  * @param {boolean} [props.loading]
  * @param {() => void} props.onPrevMonth
  * @param {() => void} props.onNextMonth
@@ -86,7 +88,9 @@ export default function MonthlyCalendar({
       <View style={[styles.grid, { width: gridW, paddingHorizontal: pad }]}>
         {cells.map((cell) => {
           const meta = monthMeta[cell.dateKey] || {};
-          const tracked = !!meta.hasTrackedData;
+          const ring = meta.completionRing;
+          const tracked =
+            !!meta.hasTrackedData || ring === 'full' || ring === 'partial';
           const dot = !!meta.hasMoment;
           const selected = cell.dateKey === selectedDateKey;
           const overflow = !cell.inMonth;
@@ -96,13 +100,22 @@ export default function MonthlyCalendar({
           if (overflow) {
             borderColor = 'transparent';
             borderW = 0;
-          } else if (tracked) {
+          } else if (ring === 'partial') {
+            borderColor = CALENDAR_PARTIAL_AMBER;
+            borderW = 2;
+          } else if (ring === 'full' || (tracked && !ring)) {
             borderColor = CALENDAR_TRACKED_GREEN;
             borderW = 2;
           }
 
           if (selected && !overflow) {
-            borderColor = tracked ? CALENDAR_TRACKED_GREEN : textPrimary;
+            if (ring === 'partial') {
+              borderColor = CALENDAR_PARTIAL_AMBER;
+            } else if (tracked) {
+              borderColor = CALENDAR_TRACKED_GREEN;
+            } else {
+              borderColor = textPrimary;
+            }
             borderW = 2;
           }
 
@@ -110,7 +123,9 @@ export default function MonthlyCalendar({
           const fill =
             selected && !overflow
               ? tracked
-                ? 'rgba(47, 157, 92, 0.1)'
+                ? ring === 'partial'
+                  ? 'rgba(217, 119, 6, 0.12)'
+                  : 'rgba(47, 157, 92, 0.1)'
                 : isDark
                   ? 'rgba(255,255,255,0.1)'
                   : 'rgba(0,0,0,0.06)'

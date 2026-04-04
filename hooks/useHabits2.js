@@ -5,7 +5,6 @@ import {
   getHabitsForDate,
   createHabit,
   updateHabit,
-  archiveHabit,
   deleteHabitPermanently,
 } from '@/services/habitService2';
 
@@ -55,17 +54,11 @@ export function useHabits2(opts = {}) {
     );
   }, [user]);
 
-  const archive = useCallback(async (habitId) => {
-    if (!user) return;
-    await archiveHabit(user.uid, habitId);
-    setHabits((prev) => prev.filter((h) => h.id !== habitId));
-  }, [user]);
-
   const remove = useCallback(async (habitId) => {
     if (!user) return;
     await deleteHabitPermanently(user.uid, habitId);
     setHabits((prev) => prev.filter((h) => h.id !== habitId));
   }, [user]);
 
-  return { habits, loading, error, forDate, add, edit, archive, remove, reload: load };
+  return { habits, loading, error, forDate, add, edit, remove, reload: load };
 }

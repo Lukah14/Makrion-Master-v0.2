@@ -387,12 +387,26 @@ export default function FoodSearchView({ initialMealType, onFoodLogged, addEntry
     }
     try {
       const food = payload.food;
-      const per100g = food.servings?.[0]?.per100g || null;
+      const donorServing =
+        payload.serving ||
+        food.defaultServing ||
+        food.servings?.find((s) => s.per100g) ||
+        food.servings?.[0];
+      const per100g = donorServing?.per100g || null;
+      const servingsList = food.servings || [];
+      const hasServingObj = servingsList.length > 0 && payload.serving;
+      const gramsFromPayload =
+        payload.loggedGrams != null && Number.isFinite(Number(payload.loggedGrams))
+          ? Number(payload.loggedGrams)
+          : null;
+      const gramsFallback =
+        !hasServingObj || payload.serving?.isGramServing
+          ? payload.quantity
+          : (payload.serving?.metricAmount || 100) * payload.quantity;
+      const grams = gramsFromPayload ?? gramsFallback;
+
       const servingGrams = payload.serving?.metricAmount ||
         (payload.serving?.isGramServing ? payload.quantity : 100);
-      const grams = payload.serving?.isGramServing
-        ? payload.quantity
-        : (payload.serving?.metricAmount || 100) * payload.quantity;
 
       if (!grams || grams <= 0) {
         showToast('Please enter a valid amount');

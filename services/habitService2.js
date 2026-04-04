@@ -108,17 +108,6 @@ export async function updateHabit(uid, habitId, changes) {
  * @param {string} uid
  * @param {string} habitId
  */
-export async function archiveHabit(uid, habitId) {
-  await updateDoc(habitRef(uid, habitId), {
-    isArchived: true,
-    updatedAt: serverTimestamp(),
-  });
-}
-
-/**
- * @param {string} uid
- * @param {string} habitId
- */
 export async function deleteHabitPermanently(uid, habitId) {
   await deleteDoc(habitRef(uid, habitId));
 }

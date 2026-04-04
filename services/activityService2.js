@@ -1,88 +1,47 @@
 /**
- * Activity service — profiles/{uid}/activities/{activityId}
- * Flat collection, dateKey-filtered.
+ * Back-compat wrapper — same storage as activityService (users/{uid}/activities).
  */
 
 import {
-  collection,
-  doc,
-  addDoc,
-  getDocs,
-  updateDoc,
-  deleteDoc,
-  query,
-  where,
-  orderBy,
-  serverTimestamp,
-} from 'firebase/firestore';
-import { db } from '@/lib/firebase';
-
-function activitiesRef(uid) {
-  return collection(db, 'profiles', uid, 'activities');
-}
-
-function activityRef(uid, activityId) {
-  return doc(db, 'profiles', uid, 'activities', activityId);
-}
+  listActivityEntries,
+  addActivityEntry,
+  updateActivityEntry,
+  deleteActivityEntry,
+} from '@/services/activityService';
 
 /**
  * @param {string} uid
  * @param {string} dateKey
- * @returns {Promise<import('@/models/firestoreModels').Activity[]>}
  */
 export async function getActivitiesByDate(uid, dateKey) {
-  const q = query(
-    activitiesRef(uid),
-    where('dateKey', '==', dateKey),
-    orderBy('createdAt', 'asc'),
-  );
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const list = await listActivityEntries(uid, dateKey);
+  return list.map((a) => ({ ...a, dateKey: a.date ?? a.dateKey }));
 }
 
 /**
  * @param {string} uid
- * @param {Object} data
- * @returns {Promise<string>}
+ * @param {Object} data must include dateKey (YYYY-MM-DD)
  */
 export async function addActivity(uid, data) {
-  const payload = {
-    uid,
-    dateKey: data.dateKey,
-    type: data.type || 'other',
-    name: data.name || '',
-    category: data.category || null,
-    durationMinutes: data.durationMinutes ?? 0,
-    caloriesBurned: data.caloriesBurned ?? 0,
-    steps: data.steps ?? null,
-    distanceKm: data.distanceKm ?? null,
-    status: data.status || 'done',
-    startedAt: data.startedAt ?? null,
-    completedAt: data.completedAt ?? null,
-    note: data.note || null,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  };
-  const ref = await addDoc(activitiesRef(uid), payload);
-  return ref.id;
+  const dateKey = data.dateKey || data.date;
+  if (!dateKey) throw new Error('addActivity: dateKey is required');
+  const { dateKey: _dk, date: _d, uid: _u, id: _i, createdAt: _c, updatedAt: _up, userId: _uid, ...rest } = data;
+  return addActivityEntry(uid, dateKey, rest);
 }
 
-/**
- * @param {string} uid
- * @param {string} activityId
- * @param {Object} changes
- */
 export async function updateActivity(uid, activityId, changes) {
-  await updateDoc(activityRef(uid, activityId), {
-    ...changes,
-    updatedAt: serverTimestamp(),
-  });
+  const {
+    id: _i,
+    createdAt: _c,
+    updatedAt: _u,
+    userId: _uid,
+    date: _dt,
+    dateKey: _dk,
+    ...patch
+  } = changes;
+  await updateActivityEntry(uid, '', activityId, patch);
 }
 
-/**
- * @param {string} uid
- * @param {string} activityId
- */
 export async function deleteActivity(uid, activityId) {
-  await deleteDoc(activityRef(uid, activityId));
+  await deleteActivityEntry(uid, '', activityId);
 }

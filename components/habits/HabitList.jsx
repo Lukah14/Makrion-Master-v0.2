@@ -7,8 +7,11 @@ export default function HabitList({
   onToggle,
   onIncrement,
   onDecrement,
+  onNumericQuickComplete,
+  onSetNumericCurrent,
   onToggleChecklistItem,
   onTimerStart,
+  onTimerPause,
   onTimerStop,
   onTimerReset,
   onLongPress,
@@ -28,8 +31,11 @@ export default function HabitList({
           onToggle={onToggle}
           onIncrement={onIncrement}
           onDecrement={onDecrement}
+          onNumericQuickComplete={onNumericQuickComplete}
+          onSetNumericCurrent={onSetNumericCurrent}
           onToggleChecklistItem={onToggleChecklistItem}
           onTimerStart={onTimerStart}
+          onTimerPause={onTimerPause}
           onTimerStop={onTimerStop}
           onTimerReset={onTimerReset}
           onLongPress={onLongPress}

@@ -1,18 +1,31 @@
 import { View, Text, StyleSheet } from 'react-native';
 import { Check } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
+import { toDateKey } from '@/lib/dateKey';
 
-function getLastSevenDays() {
-  const days = [];
+const WEEK_LABELS_MON_SUN = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/** Current calendar week Monday → Sunday (labels always Mon..Sun in order). */
+function getWeekMonToSun() {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  const dow = today.getDay(); // 0 Sun .. 6 Sat
+  const daysFromMonday = dow === 0 ? 6 : dow - 1;
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - daysFromMonday);
 
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(today.getDate() - i);
-    const label = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()];
-    const dateStr = d.toISOString().split('T')[0];
-    days.push({ label, dateStr, date: d.getDate(), isToday: i === 0 });
+  const todayKey = toDateKey(today);
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    const dateStr = toDateKey(d);
+    days.push({
+      label: WEEK_LABELS_MON_SUN[i],
+      dateStr,
+      date: d.getDate(),
+      isToday: dateStr === todayKey,
+    });
   }
   return days;
 }
@@ -20,7 +33,7 @@ function getLastSevenDays() {
 export default function HabitWeekStrip({ completionHistory = [] }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
-  const days = getLastSevenDays();
+  const days = getWeekMonToSun();
   const completedSet = new Set(completionHistory);
 
   return (

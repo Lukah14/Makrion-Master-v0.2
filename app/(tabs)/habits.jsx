@@ -1,5 +1,15 @@
-import { useState, useCallback } from 'react';
-import { ScrollView, View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { useAuth } from '@/context/AuthContext';
+import {
+  ScrollView,
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  Platform,
+  Alert,
+  ActivityIndicator,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Plus, ClipboardList } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
@@ -9,7 +19,8 @@ import { useMemorableMoments } from '@/hooks/useMemorableMoments';
 import { useNutritionDate } from '@/context/NutritionDateContext';
 import CalendarModal from '@/components/calendar/CalendarModal';
 import SelectedDateBar from '@/components/calendar/SelectedDateBar';
-import { todayDateKey } from '@/lib/dateKey';
+import { todayDateKey, addDaysToDateKey } from '@/lib/dateKey';
+import { moodRatingToEmoji } from '@/lib/moodEmoji';
 import StrikeBadge from '@/components/common/StrikeBadge';
 import HabitSubNav from '@/components/habits/HabitSubNav';
 import TodayView from '@/components/habits/TodayView';
@@ -17,51 +28,175 @@ import HabitsManageView from '@/components/habits/HabitsManageView';
 import AddHabitWizard from '@/components/habits/AddHabitWizard';
 import HabitDetailScreen from '@/components/habits/HabitDetailScreen';
 import EmptyState from '@/components/common/EmptyState';
+import { getActiveHabitsForDate } from '@/lib/habitSchedule';
+import {
+  timerTargetToSeconds,
+  elapsedSecondsToDisplay,
+  dateKeysSuccessfulFromCompletions,
+} from '@/lib/habitDayState';
+import { listHabitCompletionsForHabit, listHabitCompletionsSince } from '@/services/habitService';
 
 export default function HabitsScreen() {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
+  const { user } = useAuth();
 
   const { dateKey, bumpCalendarRefresh } = useNutritionDate();
   const today = todayDateKey();
+  const [runningTimers, setRunningTimers] = useState({});
+  const timerSegmentsRef = useRef({});
+  const [, setTimerTick] = useState(0);
+
   const {
     habits,
-    completions,
-    loading: habitsLoading,
+    habitTemplates,
     addHabit,
     editHabit,
     removeHabit,
     toggleCompletion,
-    reload: reloadHabits,
-  } = useHabits(dateKey);
+    saveDayCompletion,
+    loading: habitsLoading,
+    error: habitsError,
+  } = useHabits(dateKey, runningTimers);
 
-  const { moments: firebaseMoments, add: addMoment } = useMemorableMoments(dateKey);
+  const {
+    moments: firebaseMoments,
+    add: addMoment,
+    edit: editMoment,
+    remove: removeMoment,
+  } = useMemorableMoments(dateKey);
 
   const [activeSubpage, setActiveSubpage] = useState('today');
   const [calendarOpen, setCalendarOpen] = useState(false);
 
-  const moments = firebaseMoments.map((m) => ({
-    id: m.id,
-    text: m.text || '',
-    mood: m.emoji || '✨',
-    moodRating: null,
-    date: m.dateKey || dateKey,
-  }));
+  const moments = firebaseMoments.map((m) => mapFirebaseMomentForUi(m, dateKey));
   const [showWizard, setShowWizard] = useState(false);
   const [editingHabit, setEditingHabit] = useState(null);
   const [detailHabit, setDetailHabit] = useState(null);
   const [detailInitialTab, setDetailInitialTab] = useState('Calendar');
-  const [runningTimers, setRunningTimers] = useState({});
+  const [detailCompletionRows, setDetailCompletionRows] = useState([]);
+  const [manageBulkRows, setManageBulkRows] = useState([]);
+  const [manageBulkLoading, setManageBulkLoading] = useState(false);
+
+  const manageSinceKey = useMemo(() => addDaysToDateKey(today, -120), [today]);
+
+  useEffect(() => {
+    if (!user?.uid || activeSubpage !== 'manage') {
+      setManageBulkRows([]);
+      setManageBulkLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setManageBulkLoading(true);
+    (async () => {
+      try {
+        const rows = await listHabitCompletionsSince(user.uid, manageSinceKey);
+        if (!cancelled) setManageBulkRows(rows);
+      } catch (e) {
+        console.warn('[Habits] manage completions load failed', e?.message);
+        if (!cancelled) setManageBulkRows([]);
+      } finally {
+        if (!cancelled) setManageBulkLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.uid, activeSubpage, manageSinceKey]);
+
+  useEffect(() => {
+    if (!user?.uid || !detailHabit?.id) {
+      setDetailCompletionRows([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await listHabitCompletionsForHabit(user.uid, detailHabit.id);
+        if (!cancelled) setDetailCompletionRows(rows);
+      } catch {
+        if (!cancelled) setDetailCompletionRows([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.uid, detailHabit?.id]);
+
+  const detailHabitTemplate = useMemo(() => {
+    if (!detailHabit) return null;
+    return habitTemplates.find((h) => h.id === detailHabit.id) || detailHabit;
+  }, [habitTemplates, detailHabit]);
+
+  const detailCompletionHistory = useMemo(() => {
+    if (!detailHabitTemplate) return [];
+    return dateKeysSuccessfulFromCompletions(detailHabitTemplate, detailCompletionRows);
+  }, [detailHabitTemplate, detailCompletionRows]);
 
   const activeHabits = habits.filter((h) => !h.archived && !h.isArchived);
-  const todayComplete =
-    activeHabits.length > 0 &&
-    activeHabits.every((h) => completions[h.id]?.completed);
+  const habitsForSelectedDay = useMemo(
+    () => getActiveHabitsForDate(activeHabits, dateKey || today),
+    [activeHabits, dateKey, today],
+  );
 
-  const openDetail = useCallback((habit, tab = 'Calendar') => {
-    setDetailHabit(habit);
-    setDetailInitialTab(tab);
+  const getTimerElapsedSeconds = useCallback((habitId, habitRow) => {
+    const seg = timerSegmentsRef.current[habitId];
+    const fromDoc = Number(habitRow?._timerElapsedSec) || 0;
+    if (!seg) return fromDoc;
+    if (seg.segmentStart == null) return seg.baseSec;
+    return seg.baseSec + Math.floor((Date.now() - seg.segmentStart) / 1000);
   }, []);
+
+  const habitsForManage = useMemo(() => {
+    const byHabit = new Map();
+    for (const row of manageBulkRows) {
+      const id = row.habitId;
+      if (!id) continue;
+      if (!byHabit.has(id)) byHabit.set(id, []);
+      byHabit.get(id).push(row);
+    }
+    return activeHabits.map((h) => {
+      const template = habitTemplates.find((t) => t.id === h.id) || h;
+      const rows = byHabit.get(h.id) || [];
+      const completionHistory = dateKeysSuccessfulFromCompletions(template, rows);
+      return { ...h, completionHistory };
+    });
+  }, [activeHabits, habitTemplates, manageBulkRows]);
+
+  const habitsForTodayView = useMemo(() => {
+    return habitsForSelectedDay.map((h) => {
+      if (h.type !== 'timer' || !runningTimers[h.id]) return h;
+      const elapsed = getTimerElapsedSeconds(h.id, h);
+      const display = elapsedSecondsToDisplay(elapsed, h);
+      const targetSec = timerTargetToSeconds(h);
+      const done = elapsed >= targetSec || h.completed;
+      return {
+        ...h,
+        current: Math.round(display * 100) / 100,
+        completed: done,
+        _timerElapsedSec: elapsed,
+      };
+    });
+  }, [habitsForSelectedDay, runningTimers, getTimerElapsedSeconds]);
+
+  useEffect(() => {
+    const any = Object.values(runningTimers).some(Boolean);
+    if (!any) return undefined;
+    const id = setInterval(() => setTimerTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [runningTimers]);
+
+  const todayComplete =
+    habitsForSelectedDay.length > 0 && habitsForSelectedDay.every((h) => h.completed);
+
+  const openDetail = useCallback(
+    (habit, tab = 'Calendar') => {
+      const template = habitTemplates.find((h) => h.id === habit.id);
+      setDetailHabit(template ? { ...template, ...habit } : habit);
+      setDetailInitialTab(tab);
+    },
+    [habitTemplates],
+  );
 
   const toggleHabit = useCallback(
     async (id) => {
@@ -75,91 +210,197 @@ export default function HabitsScreen() {
     async (id) => {
       const habit = habits.find((h) => h.id === id);
       if (!habit || habit.type !== 'numeric') return;
-      const step = habit.target >= 100 ? 100 : 1;
-      const next = Math.min((habit.current || 0) + step, habit.target);
-      await editHabit(id, { current: next, completed: next >= habit.target });
+      const target = Math.max(Number(habit.target) || 1, 1);
+      const step = target >= 100 ? 100 : 1;
+      const cur = Number(habit.current) || 0;
+      const next = Math.min(cur + step, target);
+      await saveDayCompletion(id, {
+        progressValue: next,
+        isCompleted: next >= target,
+        trackingStatus: null,
+      });
       bumpCalendarRefresh();
     },
-    [habits, editHabit, bumpCalendarRefresh],
+    [habits, saveDayCompletion, bumpCalendarRefresh],
   );
 
   const decrementHabit = useCallback(
     async (id) => {
       const habit = habits.find((h) => h.id === id);
       if (!habit || habit.type !== 'numeric') return;
-      const step = habit.target >= 100 ? 100 : 1;
-      const next = Math.max((habit.current || 0) - step, 0);
-      await editHabit(id, { current: next, completed: next >= habit.target });
+      const target = Math.max(Number(habit.target) || 1, 1);
+      const step = target >= 100 ? 100 : 1;
+      const cur = Number(habit.current) || 0;
+      const next = Math.max(cur - step, 0);
+      await saveDayCompletion(id, {
+        progressValue: next,
+        isCompleted: next >= target,
+        trackingStatus: null,
+      });
       bumpCalendarRefresh();
     },
-    [habits, editHabit, bumpCalendarRefresh],
+    [habits, saveDayCompletion, bumpCalendarRefresh],
+  );
+
+  const numericQuickComplete = useCallback(
+    async (id) => {
+      const habit = habits.find((h) => h.id === id);
+      if (!habit || habit.type !== 'numeric') return;
+      const target = Number(habit.target) || 1;
+      const cur = Number(habit.current) || 0;
+      if (cur >= target) {
+        await saveDayCompletion(id, {
+          progressValue: 0,
+          isCompleted: false,
+          trackingStatus: null,
+        });
+      } else {
+        await saveDayCompletion(id, {
+          progressValue: target,
+          isCompleted: true,
+          trackingStatus: null,
+        });
+      }
+      bumpCalendarRefresh();
+    },
+    [habits, saveDayCompletion, bumpCalendarRefresh],
+  );
+
+  const setNumericCurrent = useCallback(
+    async (id, value) => {
+      const habit = habits.find((h) => h.id === id);
+      if (!habit || habit.type !== 'numeric') return;
+      const target = Number(habit.target) || 1;
+      const v = Math.max(0, Math.min(Math.floor(Number(value)) || 0, 9_999_999));
+      await saveDayCompletion(id, {
+        progressValue: v,
+        isCompleted: v >= target,
+        trackingStatus: null,
+      });
+      bumpCalendarRefresh();
+    },
+    [habits, saveDayCompletion, bumpCalendarRefresh],
   );
 
   const toggleChecklistItem = useCallback(
     async (habitId, itemId) => {
       const habit = habits.find((h) => h.id === habitId);
       if (!habit || habit.type !== 'checklist') return;
-      const items = habit.checklistItems.map((item) =>
+      const items = (habit.checklistItems || []).map((item) =>
         item.id === itemId ? { ...item, completed: !item.completed } : item,
       );
       const completedCount = items.filter((i) => i.completed).length;
-      await editHabit(habitId, {
-        checklistItems: items,
-        current: completedCount,
-        completed: completedCount >= items.length,
+      const total = items.length;
+      const pct = total > 0 ? Math.round((completedCount / total) * 100) : 0;
+      const checklistState = items.map((i) => ({ id: String(i.id), completed: !!i.completed }));
+      await saveDayCompletion(habitId, {
+        checklistState,
+        completionPercent: pct,
+        isCompleted: total > 0 && completedCount >= total,
+        trackingStatus: null,
       });
       bumpCalendarRefresh();
     },
-    [habits, editHabit, bumpCalendarRefresh],
+    [habits, saveDayCompletion, bumpCalendarRefresh],
   );
 
-  const startTimer = useCallback(
-    async (id) => {
-      setRunningTimers((prev) => ({ ...prev, [id]: true }));
-      const habit = habits.find((h) => h.id === id);
-      if (!habit) return;
-      const next = Math.min((habit.current || 0) + 1, habit.target);
-      await editHabit(id, { current: next, completed: next >= habit.target });
+  const persistTimerSeconds = useCallback(
+    async (id, habitRow, elapsedSec) => {
+      const targetSec = timerTargetToSeconds(habitRow);
+      const sec = Math.max(0, Math.floor(elapsedSec));
+      await saveDayCompletion(id, {
+        progressValue: sec,
+        isCompleted: sec >= targetSec,
+        trackingStatus: null,
+      });
       bumpCalendarRefresh();
     },
-    [habits, editHabit, bumpCalendarRefresh],
+    [saveDayCompletion, bumpCalendarRefresh],
   );
 
-  const stopTimer = useCallback((id) => {
-    setRunningTimers((prev) => ({ ...prev, [id]: false }));
-  }, []);
+  const startOrResumeTimer = useCallback(
+    (id) => {
+      const habit = habits.find((h) => h.id === id && h.type === 'timer');
+      if (!habit) return;
+      const cur = getTimerElapsedSeconds(id, habit);
+      timerSegmentsRef.current[id] = { baseSec: cur, segmentStart: Date.now() };
+      setRunningTimers((prev) => ({ ...prev, [id]: true }));
+    },
+    [habits, getTimerElapsedSeconds],
+  );
+
+  const pauseTimer = useCallback(
+    async (id) => {
+      const habit = habits.find((h) => h.id === id);
+      if (!habit || habit.type !== 'timer') return;
+      const elapsed = getTimerElapsedSeconds(id, habit);
+      timerSegmentsRef.current[id] = { baseSec: elapsed, segmentStart: null };
+      setRunningTimers((prev) => ({ ...prev, [id]: false }));
+      await persistTimerSeconds(id, habit, elapsed);
+    },
+    [habits, getTimerElapsedSeconds, persistTimerSeconds],
+  );
+
+  const stopTimer = useCallback(
+    async (id) => {
+      const habit = habits.find((h) => h.id === id);
+      if (!habit || habit.type !== 'timer') return;
+      const elapsed = getTimerElapsedSeconds(id, habit);
+      timerSegmentsRef.current[id] = { baseSec: elapsed, segmentStart: null };
+      setRunningTimers((prev) => ({ ...prev, [id]: false }));
+      await persistTimerSeconds(id, habit, elapsed);
+    },
+    [habits, getTimerElapsedSeconds, persistTimerSeconds],
+  );
 
   const resetTimer = useCallback(
     async (id) => {
+      timerSegmentsRef.current[id] = { baseSec: 0, segmentStart: null };
       setRunningTimers((prev) => ({ ...prev, [id]: false }));
-      await editHabit(id, { current: 0, completed: false });
+      await saveDayCompletion(id, {
+        progressValue: 0,
+        isCompleted: false,
+        trackingStatus: null,
+      });
       bumpCalendarRefresh();
     },
-    [editHabit, bumpCalendarRefresh],
+    [saveDayCompletion, bumpCalendarRefresh],
   );
 
   const handleSaveHabit = useCallback(
     async (habitData) => {
-      if (editingHabit) {
-        await editHabit(editingHabit.id, habitData);
-      } else {
-        await addHabit(habitData);
+      try {
+        if (editingHabit) {
+          await editHabit(editingHabit.id, habitData);
+        } else {
+          await addHabit(habitData);
+        }
+        setShowWizard(false);
+        setEditingHabit(null);
+        bumpCalendarRefresh();
+      } catch (e) {
+        const msg = e?.message || 'Could not save habit.';
+        console.warn('[Habits] save failed', msg);
+        Alert.alert('Could not save', msg);
       }
-      setShowWizard(false);
-      setEditingHabit(null);
     },
-    [editingHabit, editHabit, addHabit],
+    [editingHabit, editHabit, addHabit, bumpCalendarRefresh],
   );
 
-  const handleEditHabit = useCallback((habit) => {
-    setEditingHabit(habit);
-    setShowWizard(true);
+  const handleOpenFullEditorFromDetail = useCallback((habit) => {
+    const t = habitTemplates.find((h) => h.id === habit.id) || habit;
     setDetailHabit(null);
-  }, []);
+    setEditingHabit(t);
+    setShowWizard(true);
+  }, [habitTemplates]);
 
   const handleSaveEditFromDetail = useCallback(
-    async (habitId, changes) => {
-      await editHabit(habitId, changes);
+    async (updated) => {
+      if (!updated?.id) return;
+      await editHabit(updated.id, {
+        name: updated.name,
+        description: updated.description,
+      });
       setDetailHabit(null);
     },
     [editHabit],
@@ -167,19 +408,15 @@ export default function HabitsScreen() {
 
   const handleDuplicateHabit = useCallback(
     async (habit) => {
-      const { id, ...rest } = habit;
-      await addHabit({ ...rest, name: `${rest.name} (copy)` });
+      const { id, dayTrackingStatus, _timerElapsedSec, _timerTargetSec, completed, ...rest } = habit;
+      await addHabit({
+        ...rest,
+        name: `${rest.name} (copy)`,
+        current: 0,
+        completed: false,
+      });
     },
     [addHabit],
-  );
-
-  const handleArchiveHabit = useCallback(
-    async (habit) => {
-      const habitId = typeof habit === 'string' ? habit : habit.id;
-      await editHabit(habitId, { archived: true });
-      setDetailHabit(null);
-    },
-    [editHabit],
   );
 
   const handleDeleteHabit = useCallback(
@@ -194,7 +431,7 @@ export default function HabitsScreen() {
   const handleRestartHabit = useCallback(
     async (habit) => {
       const habitId = typeof habit === 'string' ? habit : habit.id;
-      await editHabit(habitId, { paused: false, archived: false });
+      await editHabit(habitId, { paused: false, isPaused: false });
     },
     [editHabit],
   );
@@ -211,18 +448,53 @@ export default function HabitsScreen() {
   const handleSaveMoment = useCallback(
     async (momentData) => {
       try {
+        const text = momentData.text?.trim() ? momentData.text.trim() : null;
         await addMoment({
           type: 'text',
-          text: momentData.text || (momentData.moodRating ? `Mood: ${momentData.moodRating}/10` : ''),
-          emoji: getMoodEmoji(momentData.moodRating),
-          photoUrl: momentData.photoUrl ?? null,
+          text,
+          emoji: moodRatingToEmoji(momentData.moodRating),
+          moodRating: momentData.moodRating ?? null,
+          photoUrl: momentData.photoUrl || null,
         });
         bumpCalendarRefresh();
-      } catch {
-        // optional toast
+      } catch (e) {
+        Alert.alert('Could not save', e?.message || 'Try again.');
+        throw e;
       }
     },
     [addMoment, bumpCalendarRefresh],
+  );
+
+  const handleUpdateMoment = useCallback(
+    async (momentId, updates) => {
+      try {
+        const text = updates.text?.trim() ? updates.text.trim() : null;
+        await editMoment(momentId, {
+          text,
+          emoji: moodRatingToEmoji(updates.moodRating),
+          moodRating: updates.moodRating ?? null,
+          photoUrl: updates.photoUrl !== undefined ? updates.photoUrl : undefined,
+        });
+        bumpCalendarRefresh();
+      } catch (e) {
+        Alert.alert('Could not update', e?.message || 'Try again.');
+        throw e;
+      }
+    },
+    [editMoment, bumpCalendarRefresh],
+  );
+
+  const handleDeleteMoment = useCallback(
+    async (momentId) => {
+      try {
+        await removeMoment(momentId);
+        bumpCalendarRefresh();
+      } catch (e) {
+        Alert.alert('Could not delete', e?.message || 'Try again.');
+        throw e;
+      }
+    },
+    [removeMoment, bumpCalendarRefresh],
   );
 
   return (
@@ -252,8 +524,14 @@ export default function HabitsScreen() {
           onChangeSubpage={setActiveSubpage}
         />
 
+        {habitsError ? (
+          <Text style={styles.errorText}>{habitsError}</Text>
+        ) : null}
+
         {activeSubpage === 'today' ? (
-          activeHabits.length === 0 ? (
+          habitsLoading ? (
+            <ActivityIndicator style={styles.loader} color={Colors.primary} />
+          ) : activeHabits.length === 0 ? (
             <EmptyState
               icon={ClipboardList}
               title="No habits yet"
@@ -261,29 +539,42 @@ export default function HabitsScreen() {
               actionLabel="Create Habit"
               onAction={() => setShowWizard(true)}
             />
+          ) : habitsForSelectedDay.length === 0 ? (
+            <EmptyState
+              icon={ClipboardList}
+              title="Nothing scheduled this day"
+              message="No habits are due on the selected date. Pick another day or adjust habit schedules."
+            />
           ) : (
             <TodayView
-              habits={activeHabits}
+              dateKey={dateKey}
+              todayKey={today}
+              habits={habitsForTodayView}
               moments={moments}
               onToggle={toggleHabit}
               onIncrement={incrementHabit}
               onDecrement={decrementHabit}
+              onNumericQuickComplete={numericQuickComplete}
+              onSetNumericCurrent={setNumericCurrent}
               onToggleChecklistItem={toggleChecklistItem}
-              onTimerStart={startTimer}
+              onTimerStart={startOrResumeTimer}
+              onTimerPause={pauseTimer}
               onTimerStop={stopTimer}
               onTimerReset={resetTimer}
               onHabitLongPress={(habit) => openDetail(habit, 'Calendar')}
               onAddHabit={() => setShowWizard(true)}
               onSaveMoment={handleSaveMoment}
+              onUpdateMoment={handleUpdateMoment}
+              onDeleteMoment={handleDeleteMoment}
               runningTimers={runningTimers}
             />
           )
+        ) : habitsLoading || manageBulkLoading ? (
+          <ActivityIndicator style={styles.loader} color={Colors.primary} />
         ) : (
           <HabitsManageView
-            habits={habits}
-            onEdit={handleEditHabit}
+            habits={habitsForManage}
             onDuplicate={handleDuplicateHabit}
-            onArchive={handleArchiveHabit}
             onDelete={handleDeleteHabit}
             onTogglePause={handleTogglePause}
             onAddHabit={() => setShowWizard(true)}
@@ -315,9 +606,11 @@ export default function HabitsScreen() {
           initialTab={detailInitialTab}
           onBack={() => setDetailHabit(null)}
           onSaveEdit={handleSaveEditFromDetail}
-          onArchive={handleArchiveHabit}
           onDelete={handleDeleteHabit}
           onRestart={handleRestartHabit}
+          onOpenFullEditor={handleOpenFullEditorFromDetail}
+          completionHistory={detailCompletionHistory}
+          completionRows={detailCompletionRows}
         />
       )}
 
@@ -326,13 +619,30 @@ export default function HabitsScreen() {
   );
 }
 
-function getMoodEmoji(rating) {
-  if (!rating) return '\uD83D\uDE10';
-  if (rating <= 2) return '\uD83D\uDE1E';
-  if (rating <= 4) return '\uD83D\uDE15';
-  if (rating <= 6) return '\uD83D\uDE10';
-  if (rating <= 8) return '\uD83D\uDE0A';
-  return '\uD83E\uDD29';
+function mapFirebaseMomentForUi(m, dateKey) {
+  let text = (m.text && String(m.text)) || '';
+  let moodRating =
+    typeof m.moodRating === 'number' && m.moodRating >= 1 && m.moodRating <= 10
+      ? m.moodRating
+      : null;
+  if (moodRating == null && text) {
+    const legacy = text.trim().match(/^Mood:\s*(\d{1,2})\/10$/i);
+    if (legacy) {
+      const n = parseInt(legacy[1], 10);
+      if (n >= 1 && n <= 10) {
+        moodRating = n;
+        text = '';
+      }
+    }
+  }
+  return {
+    id: m.id,
+    text,
+    mood: m.emoji || '✨',
+    moodRating,
+    date: m.dateKey || dateKey,
+    photoUrl: m.photoUrl || null,
+  };
 }
 
 const createStyles = (Colors) => StyleSheet.create({
@@ -362,6 +672,14 @@ const createStyles = (Colors) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+  },
+  loader: {
+    marginVertical: 24,
+  },
+  errorText: {
+    color: Colors.error || '#b91c1c',
+    marginBottom: 12,
+    fontFamily: 'PlusJakartaSans-Medium',
   },
   fab: {
     position: 'absolute',

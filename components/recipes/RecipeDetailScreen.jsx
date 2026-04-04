@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import {
   ArrowLeft, Bookmark, Share2, Plus, Clock, Users,
-  ChefHat, Star, Heart, Zap, Flame,
+  ChefHat, Star, Heart, Zap, Flame, Trash2,
 } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/context/AuthContext';
@@ -236,7 +236,7 @@ function NutritionTab({ recipe }) {
   );
 }
 
-export default function RecipeDetailScreen({ recipe, onBack, loadingDetail }) {
+export default function RecipeDetailScreen({ recipe, onBack, loadingDetail, onDeleteRecipe }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
   const { user } = useAuth();
@@ -315,6 +315,28 @@ export default function RecipeDetailScreen({ recipe, onBack, loadingDetail }) {
               <ArrowLeft size={20} color="#FFFFFF" strokeWidth={2.5} />
             </TouchableOpacity>
             <View style={styles.topActionsRight}>
+              {onDeleteRecipe ? (
+                <TouchableOpacity
+                  style={styles.actionBtn}
+                  activeOpacity={0.8}
+                  onPress={() => {
+                    Alert.alert(
+                      'Delete recipe',
+                      `Remove "${recipe.name}"? This cannot be undone.`,
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                          text: 'Delete',
+                          style: 'destructive',
+                          onPress: () => { void onDeleteRecipe(); },
+                        },
+                      ]
+                    );
+                  }}
+                >
+                  <Trash2 size={20} color="#FFFFFF" strokeWidth={2.2} />
+                </TouchableOpacity>
+              ) : null}
               <TouchableOpacity style={styles.actionBtn} onPress={handleSave} activeOpacity={0.8}>
                 <Bookmark
                   size={20}

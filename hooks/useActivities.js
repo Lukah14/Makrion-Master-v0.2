@@ -23,7 +23,8 @@ export function useActivities(dateKey) {
       const list = await getActivitiesByDate(user.uid, dateKey);
       setActivities(list);
     } catch (err) {
-      setError(err.message);
+      setActivities([]);
+      setError(err.message || String(err));
     } finally {
       setLoading(false);
     }
@@ -32,7 +33,7 @@ export function useActivities(dateKey) {
   useEffect(() => { load(); }, [load]);
 
   const add = useCallback(async (data) => {
-    if (!user) throw new Error('Not authenticated');
+    if (!user?.uid) throw new Error('You must be signed in to save activities.');
     const id = await addActivity(user.uid, { ...data, dateKey });
     const newAct = { id, ...data, dateKey };
     setActivities((prev) => [...prev, newAct]);
@@ -40,7 +41,7 @@ export function useActivities(dateKey) {
   }, [user, dateKey]);
 
   const edit = useCallback(async (activityId, changes) => {
-    if (!user) return;
+    if (!user?.uid) throw new Error('You must be signed in to update activities.');
     await updateActivity(user.uid, activityId, changes);
     setActivities((prev) =>
       prev.map((a) => (a.id === activityId ? { ...a, ...changes } : a)),
@@ -48,7 +49,7 @@ export function useActivities(dateKey) {
   }, [user]);
 
   const remove = useCallback(async (activityId) => {
-    if (!user) return;
+    if (!user?.uid) throw new Error('You must be signed in to delete activities.');
     await deleteActivity(user.uid, activityId);
     setActivities((prev) => prev.filter((a) => a.id !== activityId));
   }, [user]);

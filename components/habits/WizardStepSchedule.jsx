@@ -12,6 +12,7 @@ const FREQUENCY_OPTIONS = [
   { id: 'repeat', label: 'Repeat' },
 ];
 
+/** Wizard values 1–7 = Mon–Sun; habitService maps 7→0 (Sun) for JS getDay() / Firestore daysOfWeek. */
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 function FrequencySection({ repeatRule, onRepeatRuleChange, repeatDays, onRepeatDaysChange }) {

@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView, Image,
-  StyleSheet, TextInput, ActivityIndicator,
+  StyleSheet, TextInput, ActivityIndicator, Alert,
 } from 'react-native';
 import { Search, SlidersHorizontal, Bookmark, Plus, Zap, Pencil, Copy, Trash2, X, ChevronRight } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
@@ -12,6 +12,13 @@ import CreateRecipeScreen from './CreateRecipeScreen';
 import { getCategoryIcon } from './foodCategoryIcons';
 import { useRecipes } from '@/hooks/useRecipes';
 import { useSavedRecipes } from '@/hooks/useSavedRecipes';
+import {
+  filterRecipes,
+  sortRecipes,
+  countActiveFilters,
+  buildFilterChips,
+  removeFilterByChipId,
+} from '@/lib/recipeFilters';
 
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
@@ -267,7 +274,16 @@ function SearchResultCard({ recipe, onPress, onSave }) {
   );
 }
 
-function SearchResultsView({ results, loading, error, query, onPress, onSave, savedIds = new Set() }) {
+function SearchResultsView({
+  results,
+  loading,
+  error,
+  query,
+  onPress,
+  onSave,
+  savedIds = new Set(),
+  filteredOutByFilters = false,
+}) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
 
@@ -293,10 +309,14 @@ function SearchResultsView({ results, loading, error, query, onPress, onSave, sa
   if (results.length === 0) {
     return (
       <View style={styles.emptyState}>
-        <Text style={styles.emptyIcon}>🔍</Text>
-        <Text style={styles.emptyTitle}>No recipes found</Text>
+        <Text style={styles.emptyIcon}>{filteredOutByFilters ? '🎛️' : '🔍'}</Text>
+        <Text style={styles.emptyTitle}>
+          {filteredOutByFilters ? 'No matches for filters' : 'No recipes found'}
+        </Text>
         <Text style={styles.emptySubtitle}>
-          No results for "{query}". Try different keywords.
+          {filteredOutByFilters
+            ? 'Try clearing some filters or broadening your search.'
+            : `No results for "${query}". Try different keywords.`}
         </Text>
       </View>
     );
@@ -320,7 +340,7 @@ function SearchResultsView({ results, loading, error, query, onPress, onSave, sa
   );
 }
 
-function SavedRecipesTab({ recipes, loading, error, onPress, onRemove }) {
+function SavedRecipesTab({ recipes, loading, error, onPress, onRemove, emptyAfterFilter }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
 
@@ -345,9 +365,13 @@ function SavedRecipesTab({ recipes, loading, error, onPress, onRemove }) {
   if (recipes.length === 0) {
     return (
       <View style={styles.emptyState}>
-        <Text style={styles.emptyIcon}>🔖</Text>
-        <Text style={styles.emptyTitle}>No saved recipes yet</Text>
-        <Text style={styles.emptySubtitle}>Save recipes from search or explore to find them here</Text>
+        <Text style={styles.emptyIcon}>{emptyAfterFilter ? '🎛️' : '🔖'}</Text>
+        <Text style={styles.emptyTitle}>{emptyAfterFilter ? 'No saved recipes match filters' : 'No saved recipes yet'}</Text>
+        <Text style={styles.emptySubtitle}>
+          {emptyAfterFilter
+            ? 'Adjust or clear filters to see more saved recipes.'
+            : 'Save recipes from search or explore to find them here'}
+        </Text>
       </View>
     );
   }
@@ -390,7 +414,7 @@ function SavedRecipesTab({ recipes, loading, error, onPress, onRemove }) {
   );
 }
 
-function MyRecipesTab({ onPress, onCreate, recipes, loading, error, onDelete }) {
+function MyRecipesTab({ onPress, onCreate, recipes, loading, error, onDelete, emptyAfterFilter }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
 
@@ -410,9 +434,13 @@ function MyRecipesTab({ onPress, onCreate, recipes, loading, error, onDelete }) 
         </View>
       ) : recipes.length === 0 ? (
         <View style={styles.emptyState}>
-          <Text style={styles.emptyIcon}>👨‍🍳</Text>
-          <Text style={styles.emptyTitle}>No recipes yet</Text>
-          <Text style={styles.emptySubtitle}>Create your own custom recipes to track nutrition perfectly</Text>
+          <Text style={styles.emptyIcon}>{emptyAfterFilter ? '🎛️' : '👨‍🍳'}</Text>
+          <Text style={styles.emptyTitle}>{emptyAfterFilter ? 'No recipes match filters' : 'No recipes yet'}</Text>
+          <Text style={styles.emptySubtitle}>
+            {emptyAfterFilter
+              ? 'Clear filters or create a recipe that fits your criteria.'
+              : 'Create your own custom recipes to track nutrition perfectly'}
+          </Text>
         </View>
       ) : (
         <View style={styles.section}>
@@ -421,27 +449,44 @@ function MyRecipesTab({ onPress, onCreate, recipes, loading, error, onDelete }) 
             const kcal = r.nutritionPerServing?.kcal ?? r.calories ?? 0;
             const totalTime = (r.prepTimeMinutes || 0) + (r.cookTimeMinutes || 0);
             return (
-              <TouchableOpacity key={r.id} style={styles.myRecipeCard} activeOpacity={0.7} onPress={() => onPress?.(r)}>
-                <View style={styles.myRecipeIconWrap}>
-                  <Text style={styles.myRecipeEmoji}>🍽️</Text>
-                </View>
-                <View style={styles.myRecipeInfo}>
-                  <Text style={styles.myRecipeName} numberOfLines={1}>{r.name}</Text>
-                  <Text style={styles.myRecipeMeta}>
-                    {totalTime > 0 ? `${totalTime}m · ` : ''}{kcal} kcal · {r.servings || 1} serving{(r.servings || 1) > 1 ? 's' : ''}
-                  </Text>
-                </View>
-                <View style={styles.myRecipeActions}>
-                  <TouchableOpacity
-                    style={styles.myActionBtn}
-                    activeOpacity={0.7}
-                    onPress={() => onDelete?.(r.id)}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Trash2 size={14} color={Colors.error || '#FF3B30'} />
-                  </TouchableOpacity>
-                </View>
-              </TouchableOpacity>
+              <View key={r.id} style={styles.myRecipeCard}>
+                <TouchableOpacity
+                  style={styles.myRecipeCardMain}
+                  activeOpacity={0.7}
+                  onPress={() => onPress?.(r)}
+                >
+                  <View style={styles.myRecipeIconWrap}>
+                    <Text style={styles.myRecipeEmoji}>🍽️</Text>
+                  </View>
+                  <View style={styles.myRecipeInfo}>
+                    <Text style={styles.myRecipeName} numberOfLines={1}>{r.name}</Text>
+                    <Text style={styles.myRecipeMeta}>
+                      {totalTime > 0 ? `${totalTime}m · ` : ''}{kcal} kcal · {r.servings || 1} serving{(r.servings || 1) > 1 ? 's' : ''}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.myActionBtn}
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    Alert.alert(
+                      'Delete recipe',
+                      `Remove "${r.name}"?`,
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                          text: 'Delete',
+                          style: 'destructive',
+                          onPress: () => { void onDelete?.(r.id); },
+                        },
+                      ]
+                    );
+                  }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Trash2 size={14} color={Colors.error || '#FF3B30'} />
+                </TouchableOpacity>
+              </View>
             );
           })}
         </View>
@@ -464,6 +509,7 @@ export default function RecipesView() {
   } = useRecipes();
   const {
     recipes: savedRecipes,
+    docs: savedDocs,
     loading: savedRecipesLoading,
     error: savedRecipesError,
     toggleSaveRecipe,
@@ -490,6 +536,70 @@ export default function RecipesView() {
   const debounceRef = useRef(null);
 
   const isSearching = debouncedQuery.trim().length > 0;
+
+  const savedEnriched = useMemo(
+    () =>
+      savedRecipes.map((r, i) => ({
+        ...r,
+        _addedAt: savedDocs[i]?.addedAt?.toMillis?.() ?? 0,
+      })),
+    [savedRecipes, savedDocs]
+  );
+
+  const userRecipesDisplay = useMemo(
+    () =>
+      userRecipes.map((r) => ({
+        ...r,
+        image: r.imageUrl || r.image || FALLBACK_IMAGES[0],
+        cookTime: r.cookTimeMinutes ?? r.cookTime ?? 0,
+        prepTime: r.prepTimeMinutes ?? r.prepTime ?? 0,
+        calories: r.nutritionPerServing?.kcal ?? r.calories ?? 0,
+        protein: r.nutritionPerServing?.protein ?? r.protein ?? 0,
+        carbs: r.nutritionPerServing?.carbs ?? r.carbs ?? 0,
+        fat: r.nutritionPerServing?.fat ?? r.fat ?? 0,
+      })),
+    [userRecipes]
+  );
+
+  const searchIndexed = useMemo(
+    () => searchResults.map((r, i) => ({ ...r, _searchIndex: i })),
+    [searchResults]
+  );
+
+  const filteredSearch = useMemo(() => {
+    const f = filterRecipes(searchIndexed, filters);
+    return sortRecipes(f, filters.sortBy, true);
+  }, [searchIndexed, filters]);
+
+  const filteredSaved = useMemo(() => {
+    const f = filterRecipes(savedEnriched, filters);
+    return sortRecipes(f, filters.sortBy, false);
+  }, [savedEnriched, filters]);
+
+  const filteredMy = useMemo(() => {
+    const f = filterRecipes(userRecipesDisplay, filters);
+    return sortRecipes(f, filters.sortBy, false);
+  }, [userRecipesDisplay, filters]);
+
+  const filteredRecent = useMemo(() => {
+    const f = filterRecipes(recentRecipes, filters);
+    return sortRecipes(f, filters.sortBy, false);
+  }, [recentRecipes, filters]);
+
+  const filteredSavedPreview = useMemo(() => {
+    return sortRecipes(filterRecipes(savedEnriched, filters), filters.sortBy, false).slice(0, 3);
+  }, [savedEnriched, filters]);
+
+  const activeCount = countActiveFilters(filters);
+  const filterChipDescriptors = useMemo(() => buildFilterChips(filters), [filters]);
+
+  const clearAllFilters = useCallback(() => {
+    setFilters({ ...EMPTY_FILTERS });
+  }, []);
+
+  const removeChip = useCallback((chipId) => {
+    setFilters((prev) => removeFilterByChipId(prev, chipId));
+  }, []);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -536,16 +646,6 @@ export default function RecipesView() {
     setSearchError(null);
     setSearchLoading(false);
   };
-
-  const activeCount =
-    (filters.mealType?.length || 0) +
-    (filters.diet?.length || 0) +
-    (filters.cookTime?.length || 0) +
-    
-    (filters.nutrition?.length || 0) +
-    (filters.ingredients?.length || 0) +
-    (filters.applyPreferences ? 1 : 0) +
-    (filters.savedOnly ? 1 : 0);
 
   const handleToggleSaveRecipe = async (recipe) => {
     try {
@@ -601,11 +701,21 @@ export default function RecipesView() {
   }
 
   if (selectedRecipe) {
+    const canDeleteRecipe = userRecipes.some((r) => r.id === selectedRecipe.id);
     return (
       <RecipeDetailScreen
         recipe={selectedRecipe}
         loadingDetail={loadingDetail}
         onBack={() => { setSelectedRecipe(null); setLoadingDetail(false); }}
+        onDeleteRecipe={canDeleteRecipe ? async () => {
+          try {
+            await removeRecipe(selectedRecipe.id);
+            setSelectedRecipe(null);
+            setLoadingDetail(false);
+          } catch (e) {
+            Alert.alert('Could not delete recipe', e?.message || 'Please try again.');
+          }
+        } : undefined}
       />
     );
   }
@@ -626,16 +736,51 @@ export default function RecipesView() {
         />
         {searchLoading && query.trim().length > 0 ? (
           <ActivityIndicator size="small" color={Colors.textTertiary} />
-        ) : query.length > 0 ? (
-          <TouchableOpacity onPress={handleClearSearch} activeOpacity={0.7}>
+        ) : null}
+        {query.length > 0 ? (
+          <TouchableOpacity onPress={handleClearSearch} activeOpacity={0.7} style={styles.searchBarIconBtn}>
             <X size={18} color={Colors.textTertiary} />
           </TouchableOpacity>
-        ) : (
-          <TouchableOpacity onPress={() => setFilterOpen(true)} activeOpacity={0.7} style={[styles.filterBtn, activeCount > 0 && styles.filterBtnActive]}>
-            <SlidersHorizontal size={18} color={activeCount > 0 ? Colors.onPrimary : Colors.textSecondary} strokeWidth={2} />
-          </TouchableOpacity>
-        )}
+        ) : null}
+        <TouchableOpacity
+          onPress={() => setFilterOpen(true)}
+          activeOpacity={0.7}
+          style={[styles.filterBtn, activeCount > 0 && styles.filterBtnActive]}
+        >
+          <SlidersHorizontal size={18} color={activeCount > 0 ? Colors.onPrimary : Colors.textSecondary} strokeWidth={2} />
+          {activeCount > 0 ? (
+            <View style={styles.filterCountBadge}>
+              <Text style={styles.filterCountBadgeText}>{activeCount}</Text>
+            </View>
+          ) : null}
+        </TouchableOpacity>
       </View>
+
+      {filterChipDescriptors.length > 0 && (
+        <View style={styles.chipStripWrap}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.chipStripContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            {filterChipDescriptors.map((c) => (
+              <TouchableOpacity
+                key={c.id}
+                style={styles.activeChip}
+                onPress={() => removeChip(c.id)}
+                activeOpacity={0.75}
+              >
+                <Text style={styles.activeChipText} numberOfLines={1}>{c.label}</Text>
+                <X size={14} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity style={styles.clearAllChip} onPress={clearAllFilters} activeOpacity={0.75}>
+              <Text style={styles.clearAllChipText}>Clear all</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      )}
 
       {!isSearching && (
         <View style={styles.tabRow}>
@@ -661,20 +806,21 @@ export default function RecipesView() {
       >
         {isSearching ? (
           <SearchResultsView
-            results={searchResults}
+            results={filteredSearch}
             loading={searchLoading}
             error={searchError}
             query={debouncedQuery}
             onPress={handleRecipePress}
             onSave={handleToggleSaveRecipe}
             savedIds={savedIds}
+            filteredOutByFilters={searchResults.length > 0 && filteredSearch.length === 0}
           />
         ) : (
           <>
             {tab === 'Explore' && (
               <ExploreTab
-                recentRecipes={recentRecipes}
-                savedPreview={savedRecipes.slice(0, 3)}
+                recentRecipes={filteredRecent}
+                savedPreview={filteredSavedPreview}
                 savedLoading={savedRecipesLoading}
                 onPress={handleRecipePress}
                 onToggleSaveRecipe={handleToggleSaveRecipe}
@@ -684,21 +830,29 @@ export default function RecipesView() {
             )}
             {tab === 'Saved Recipes' && (
               <SavedRecipesTab
-                recipes={savedRecipes}
+                recipes={filteredSaved}
                 loading={savedRecipesLoading}
                 error={savedRecipesError}
                 onPress={handleRecipePress}
                 onRemove={handleRemoveSaved}
+                emptyAfterFilter={savedRecipes.length > 0 && filteredSaved.length === 0}
               />
             )}
             {tab === 'My Recipes' && (
               <MyRecipesTab
-                recipes={userRecipes}
+                recipes={filteredMy}
                 loading={userRecipesLoading}
                 error={userRecipesError}
                 onPress={handleRecipePress}
                 onCreate={() => setShowCreateRecipe(true)}
-                onDelete={(id) => removeRecipe(id)}
+                emptyAfterFilter={userRecipes.length > 0 && filteredMy.length === 0}
+                onDelete={async (id) => {
+                  try {
+                    await removeRecipe(id);
+                  } catch (e) {
+                    Alert.alert('Could not delete recipe', e?.message || 'Please try again.');
+                  }
+                }}
               />
             )}
           </>
@@ -743,16 +897,81 @@ const createStyles = (Colors) => StyleSheet.create({
     fontFamily: 'PlusJakartaSans-Regular',
     color: Colors.textPrimary,
   },
+  searchBarIconBtn: {
+    padding: 4,
+  },
   filterBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: Colors.background,
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
   },
   filterBtnActive: {
     backgroundColor: Colors.textPrimary,
+  },
+  filterCountBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+    borderWidth: 2,
+    borderColor: Colors.cardBackground,
+  },
+  filterCountBadgeText: {
+    fontSize: 9,
+    fontFamily: 'PlusJakartaSans-Bold',
+    color: Colors.onPrimary,
+  },
+  chipStripWrap: {
+    marginHorizontal: 16,
+    marginBottom: 6,
+    maxHeight: 44,
+  },
+  chipStripContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 4,
+  },
+  activeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    backgroundColor: Colors.cardBackground,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    maxWidth: 220,
+  },
+  activeChipText: {
+    fontSize: 13,
+    fontFamily: 'PlusJakartaSans-Medium',
+    color: Colors.textPrimary,
+    flexShrink: 1,
+  },
+  clearAllChip: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: Colors.textPrimary,
+    borderStyle: 'dashed',
+  },
+  clearAllChipText: {
+    fontSize: 13,
+    fontFamily: 'PlusJakartaSans-SemiBold',
+    color: Colors.textPrimary,
   },
   tabRow: {
     flexDirection: 'row',
@@ -1013,6 +1232,12 @@ const createStyles = (Colors) => StyleSheet.create({
     shadowRadius: 6,
     elevation: 1,
   },
+  myRecipeCardMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    minWidth: 0,
+  },
   myRecipeIconWrap: {
     width: 52,
     height: 52,
@@ -1037,7 +1262,6 @@ const createStyles = (Colors) => StyleSheet.create({
     fontFamily: 'PlusJakartaSans-Regular',
     color: Colors.textTertiary,
   },
-  myRecipeActions: { flexDirection: 'row', gap: 4 },
   myActionBtn: {
     width: 34,
     height: 34,

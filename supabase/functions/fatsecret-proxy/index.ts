@@ -123,24 +123,6 @@ function mapFoodDetail(foodData: Record<string, unknown>) {
   };
 }
 
-function mapExercise(item: Record<string, unknown>) {
-  const compendium = item.compendium_code ? String(item.compendium_code) : null;
-  const metValue = item.met_value ? parseFloat(String(item.met_value)) : 0;
-  const category = item.exercise_category
-    ? String((item.exercise_category as Record<string, unknown>).exercise_category_name ?? item.exercise_category)
-    : "General";
-
-  return {
-    id: String(item.exercise_id ?? ""),
-    name: String(item.exercise_name ?? ""),
-    description: item.exercise_description ? String(item.exercise_description) : "",
-    category,
-    met: metValue,
-    compendiumCode: compendium,
-    source: "fatsecret",
-  };
-}
-
 function mapRecipe(item: Record<string, unknown>) {
   const desc = String(item.recipe_description ?? "");
   const rating = item.rating ? parseFloat(String(item.rating)) : 0;
@@ -315,37 +297,6 @@ Deno.serve(async (req: Request) => {
       const data = await res.json();
       const foodDetail = data?.food ? mapFoodDetail(data.food as Record<string, unknown>) : null;
       return new Response(JSON.stringify({ food: foodDetail }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    if (action === "exercises") {
-      const query = url.searchParams.get("q") ?? "";
-      const maxResults = parseInt(url.searchParams.get("max_results") ?? "50");
-      const searchTerm = query.trim() || "exercise";
-
-      const params = new URLSearchParams({
-        method: "exercises.search",
-        format: "json",
-        max_results: String(maxResults),
-        search_expression: searchTerm,
-      });
-
-      const res = await fetch(`${API_URL}?${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`FatSecret exercises API error: ${res.status} ${text}`);
-      }
-
-      const data = await res.json();
-      const raw = data?.exercises?.exercise ?? [];
-      const arr = Array.isArray(raw) ? raw : [raw];
-      const totalResults = parseInt(data?.exercises?.total_results ?? String(arr.length));
-
-      return new Response(JSON.stringify({ exercises: arr.map(mapExercise), totalResults }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }

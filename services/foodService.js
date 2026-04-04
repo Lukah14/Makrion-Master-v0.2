@@ -16,6 +16,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { computeNutritionPer100g, GRAM_EQUIVALENTS } from '@/lib/servingConversion';
+import { formatServingLabel } from '@/lib/servingUtils';
 
 // ─── Schema helpers ────────────────────────────────────────────────────────────
 
@@ -199,67 +200,78 @@ export function myFoodToSearchModel(food) {
   };
 }
 
+function nutritionPer100gStripe(raw) {
+  if (!raw) return null;
+  return {
+    calories: raw.calories ?? 0,
+    protein: raw.protein ?? 0,
+    carbohydrate: raw.carbs ?? raw.carbohydrate ?? 0,
+    fat: raw.fat ?? 0,
+    saturated_fat: raw.saturatedFat ?? raw.saturated_fat ?? 0,
+    fiber: raw.fiber ?? 0,
+    sugar: raw.sugar ?? 0,
+    sodium: raw.sodium ?? 0,
+  };
+}
+
+/**
+ * Original row = nutrition exactly as entered for defaultServing.
+ * Optional second row "100 g" when we have per-100g data (by weight), so users can log by grams too.
+ */
 function buildServingsForMyFood(food) {
   const serving = food.defaultServing || {};
   const n = food.nutritionPerServing || {};
   const amount = serving.amount || 1;
   const unit = serving.unit || 'serving';
-  const grams = serving.gramsEquivalent;
+  const gramsEq = serving.gramsEquivalent;
+
+  const stripe100 = nutritionPer100gStripe(food.nutritionPer100g);
+
+  const nutritionRow = {
+    calories: n.calories || 0,
+    protein: n.protein || 0,
+    carbohydrate: n.carbs || 0,
+    fat: n.fat || 0,
+    saturated_fat: n.saturatedFat || 0,
+    fiber: n.fiber || 0,
+    sugar: n.sugar || 0,
+    sodium: n.sodium || 0,
+  };
+
+  const isGramUnit = unit === 'g';
+  const desc = `${amount} ${unit}`.trim();
 
   const defaultS = {
-    id: 'user_default',
-    description: `${amount} ${unit}`,
+    id: 'user_original',
+    description: desc,
     numberOfUnits: 1,
-    metricAmount: grams || 0,
+    metricAmount: isGramUnit ? amount : (gramsEq || 0),
     metricUnit: 'g',
     isDefault: true,
-    isGramServing: unit === 'g',
-    nutrition: {
-      calories: n.calories || 0,
-      protein: n.protein || 0,
-      carbohydrate: n.carbs || 0,
-      fat: n.fat || 0,
-      saturated_fat: n.saturatedFat || 0,
-      fiber: n.fiber || 0,
-      sugar: n.sugar || 0,
-      sodium: n.sodium || 0,
-    },
-    per100g: food.nutritionPer100g ? {
-      calories: food.nutritionPer100g.calories || 0,
-      protein: food.nutritionPer100g.protein || 0,
-      carbohydrate: food.nutritionPer100g.carbs || 0,
-      fat: food.nutritionPer100g.fat || 0,
-      saturated_fat: food.nutritionPer100g.saturatedFat || 0,
-      fiber: food.nutritionPer100g.fiber || 0,
-      sugar: food.nutritionPer100g.sugar || 0,
-      sodium: food.nutritionPer100g.sodium || 0,
-    } : null,
-    displayLabel: `${amount} ${unit}`,
+    isGramServing: isGramUnit,
+    nutrition: nutritionRow,
+    per100g: stripe100,
+    displayLabel: isGramUnit
+      ? `${amount} g`
+      : gramsEq && gramsEq > 0
+        ? formatServingLabel(desc, gramsEq, 'g', false)
+        : desc,
   };
 
   const result = [defaultS];
 
-  if (grams && unit !== 'g') {
+  if (stripe100 && (!isGramUnit || amount !== 100)) {
     result.push({
-      id: 'user_grams',
-      description: 'g',
+      id: 'user_per_100g',
+      description: '100g',
       numberOfUnits: 100,
       metricAmount: 100,
       metricUnit: 'g',
       isDefault: false,
       isGramServing: true,
-      nutrition: food.nutritionPer100g ? {
-        calories: food.nutritionPer100g.calories || 0,
-        protein: food.nutritionPer100g.protein || 0,
-        carbohydrate: food.nutritionPer100g.carbs || 0,
-        fat: food.nutritionPer100g.fat || 0,
-        saturated_fat: food.nutritionPer100g.saturatedFat || 0,
-        fiber: food.nutritionPer100g.fiber || 0,
-        sugar: food.nutritionPer100g.sugar || 0,
-        sodium: food.nutritionPer100g.sodium || 0,
-      } : defaultS.nutrition,
-      per100g: defaultS.per100g,
-      displayLabel: 'grams',
+      nutrition: { ...stripe100 },
+      per100g: stripe100,
+      displayLabel: '100 g',
     });
   }
 

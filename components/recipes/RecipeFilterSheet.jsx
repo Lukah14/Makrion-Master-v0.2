@@ -1,38 +1,62 @@
-import { useState, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView, Modal,
-  StyleSheet, SafeAreaView, TextInput, Switch, Animated,
+  StyleSheet, SafeAreaView, TextInput,
 } from 'react-native';
-import { X, Search, Plus, ChevronDown, ChevronUp, Pencil } from 'lucide-react-native';
+import { X, Search, Plus, ChevronDown, ChevronUp } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
-import { RECIPE_FILTER_OPTIONS } from '@/data/recipeData';
+import {
+  EMPTY_RECIPE_FILTERS,
+  SORT_OPTIONS,
+  countActiveFilters,
+} from '@/lib/recipeFilters';
 
-export const EMPTY_FILTERS = {
-  mealType: [],
-  diet: [],
-  cookTime: [],
-  nutrition: [],
-  ingredients: [],
-  applyPreferences: false,
-  savedOnly: false,
-};
+export { EMPTY_RECIPE_FILTERS as EMPTY_FILTERS } from '@/lib/recipeFilters';
 
+const MEAL_TYPES = ['Breakfast', 'Lunch', 'Dinner', 'Snack', 'Dessert'];
+const NUTRITION_GOALS = ['High Protein', 'Low Calorie', 'Low Carb', 'Low Fat', 'Balanced'];
+const CALORIE_PRESETS = [
+  { value: '0-200', label: '0–200 kcal' },
+  { value: '200-400', label: '200–400 kcal' },
+  { value: '400-600', label: '400–600 kcal' },
+  { value: 'custom', label: 'Custom range' },
+];
+const MACRO_PRESETS = [
+  { value: '0-10', label: '0–10g' },
+  { value: '10-20', label: '10–20g' },
+  { value: '20+', label: '20g+' },
+];
+const CARB_PRESETS = [
+  { value: '0-20', label: '0–20g' },
+  { value: '20-40', label: '20–40g' },
+  { value: '40+', label: '40g+' },
+];
+const FAT_PRESETS = MACRO_PRESETS;
+const TIME_PRESETS = ['Under 10 min', 'Under 20 min', 'Under 30 min', '30+ min'];
+const TOTAL_TIME_PRESETS = [
+  { value: 'Quick recipes', label: 'Quick (≤20 min total)' },
+  { value: 'Medium recipes', label: 'Medium (21–45 min)' },
+  { value: 'Long recipes', label: 'Long (45+ min)' },
+];
+const DIETARY_PREFS = [
+  'Vegetarian',
+  'Vegan',
+  'Gluten Free',
+  'Dairy Free',
+  'High Fiber',
+  'Keto-friendly',
+];
 const INGREDIENT_SUGGESTIONS = [
-  'Chicken', 'Ground Beef', 'Salmon', 'Eggs', 'Tofu',
-  'Banana', 'Oats', 'Yogurt', 'Avocado', 'Tomato',
+  'chicken', 'egg', 'oats', 'rice', 'avocado', 'tomato', 'salmon', 'broccoli', 'banana', 'pasta',
 ];
 
-const SECTION_INITIAL_COUNT = 6;
+const SECTION_LIMIT = 8;
 
 function IngredientChip({ label, onRemove }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
-
   return (
     <View style={styles.ingChip}>
-      <View style={styles.ingAvatar}>
-        <Text style={styles.ingAvatarText}>{label.charAt(0).toUpperCase()}</Text>
-      </View>
       <Text style={styles.ingChipLabel} numberOfLines={1}>{label}</Text>
       <TouchableOpacity onPress={onRemove} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} activeOpacity={0.7}>
         <X size={12} color={Colors.textSecondary} />
@@ -41,53 +65,58 @@ function IngredientChip({ label, onRemove }) {
   );
 }
 
-function ToggleRow({ label, value, onToggle, onEdit, editLabel }) {
+function SectionTitle({ title, count }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
-
   return (
-    <View style={styles.toggleRow}>
-      <Text style={styles.toggleLabel}>{label}</Text>
-      <View style={styles.toggleRight}>
-        {onEdit && (
-          <TouchableOpacity onPress={onEdit} style={styles.editLink} activeOpacity={0.7}>
-            <Pencil size={13} color={Colors.primary} />
-            <Text style={styles.editLinkText}>{editLabel || 'Edit'}</Text>
-          </TouchableOpacity>
-        )}
-        <Switch
-          value={value}
-          onValueChange={onToggle}
-          trackColor={{ false: Colors.border, true: Colors.primary }}
-          thumbColor="#FFFFFF"
-          ios_backgroundColor={Colors.border}
-        />
-      </View>
+    <View style={styles.sectionTitleRow}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      {count > 0 && (
+        <View style={styles.sectionBadge}>
+          <Text style={styles.sectionBadgeText}>{count}</Text>
+        </View>
+      )}
     </View>
   );
 }
 
-function FilterSection({ title, options, selected, onToggle, initialCount }) {
+function ChipGrid({ options, selected, onToggle, singleKey, expanded, onExpand, limit = SECTION_LIMIT }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
-
-  const [expanded, setExpanded] = useState(false);
-  const limit = initialCount ?? SECTION_INITIAL_COUNT;
-  const visible = expanded ? options : options.slice(0, limit);
-  const hasMore = options.length > limit;
-
+  const list = typeof options[0] === 'string' ? options.map((o) => ({ value: o, label: o })) : options;
+  const vis = expanded ? list : list.slice(0, limit);
   return (
-    <View style={styles.section}>
-      <View style={styles.sectionTitleRow}>
-        <Text style={styles.sectionTitle}>{title}</Text>
-        {selected.length > 0 && (
-          <View style={styles.sectionBadge}>
-            <Text style={styles.sectionBadgeText}>{selected.length}</Text>
-          </View>
-        )}
-      </View>
+    <View style={styles.chipWrap}>
+      {vis.map((opt) => {
+        const val = opt.value ?? opt;
+        const active = singleKey
+          ? selected === val
+          : (selected || []).includes(val);
+        return (
+          <TouchableOpacity
+            key={String(val)}
+            style={[styles.chip, active && styles.chipActive]}
+            onPress={() => onToggle(val)}
+            activeOpacity={0.7}
+          >
+            {active && <View style={styles.chipDot} />}
+            <Text style={[styles.chipText, active && styles.chipTextActive]}>{opt.label ?? opt}</Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+}
+
+function MultiChipRow({ options, selected, onToggle, expanded, onExpand, limit = SECTION_LIMIT }) {
+  const { colors: Colors } = useTheme();
+  const styles = createStyles(Colors);
+  const vis = expanded ? options : options.slice(0, limit);
+  const hasMore = options.length > limit;
+  return (
+    <>
       <View style={styles.chipWrap}>
-        {visible.map((opt) => {
+        {vis.map((opt) => {
           const active = selected.includes(opt);
           return (
             <TouchableOpacity
@@ -103,102 +132,109 @@ function FilterSection({ title, options, selected, onToggle, initialCount }) {
         })}
       </View>
       {hasMore && (
-        <TouchableOpacity style={styles.expandBtn} onPress={() => setExpanded(!expanded)} activeOpacity={0.7}>
+        <TouchableOpacity style={styles.expandBtn} onPress={onExpand} activeOpacity={0.7}>
           {expanded ? <ChevronUp size={15} color={Colors.textTertiary} /> : <ChevronDown size={15} color={Colors.textTertiary} />}
-          <Text style={styles.expandText}>{expanded ? `Show less` : `Show ${options.length - limit} more`}</Text>
+          <Text style={styles.expandText}>{expanded ? 'Show less' : `Show ${options.length - limit} more`}</Text>
         </TouchableOpacity>
       )}
-      <View style={styles.divider} />
-    </View>
+    </>
   );
 }
 
 export default function RecipeFilterSheet({ visible, filters, onApply, onClose }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
+  const [local, setLocal] = useState(() => ({ ...EMPTY_RECIPE_FILTERS, ...filters }));
+  const [ingQ, setIngQ] = useState('');
+  const [exQ, setExQ] = useState('');
+  const [showIngSuggest, setShowIngSuggest] = useState(false);
+  const [showExSuggest, setShowExSuggest] = useState(false);
+  const [expandMeal, setExpandMeal] = useState(false);
+  const [expandDiet, setExpandDiet] = useState(false);
+  const prevVisible = useRef(false);
 
-  const [localFilters, setLocalFilters] = useState(filters || EMPTY_FILTERS);
-  const [ingredientQuery, setIngredientQuery] = useState('');
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const inputRef = useRef(null);
-
-  const ingredients = localFilters.ingredients || [];
-
-  const syncFilters = (updater) => {
-    setLocalFilters((prev) => {
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      return next;
-    });
-  };
-
-  const toggleChip = (key, value) => {
-    syncFilters((prev) => {
-      const arr = prev[key] || [];
-      return {
-        ...prev,
-        [key]: arr.includes(value) ? arr.filter((v) => v !== value) : [...arr, value],
-      };
-    });
-  };
-
-  const addIngredient = (ing) => {
-    const trimmed = (ing || ingredientQuery).trim();
-    if (!trimmed) return;
-    if (!ingredients.map((i) => i.toLowerCase()).includes(trimmed.toLowerCase())) {
-      syncFilters((prev) => ({
-        ...prev,
-        ingredients: [...(prev.ingredients || []), trimmed],
-      }));
+  useEffect(() => {
+    if (visible && !prevVisible.current) {
+      setLocal({ ...EMPTY_RECIPE_FILTERS, ...filters });
     }
-    setIngredientQuery('');
-    setShowSuggestions(false);
+    prevVisible.current = visible;
+  }, [visible, filters]);
+
+  const sync = (patch) => setLocal((p) => ({ ...p, ...patch }));
+
+  const toggleArr = (key, val) => {
+    setLocal((p) => {
+      const arr = [...(p[key] || [])];
+      const i = arr.indexOf(val);
+      if (i >= 0) arr.splice(i, 1);
+      else arr.push(val);
+      return { ...p, [key]: arr };
+    });
   };
 
-  const removeIngredient = (ing) => {
-    syncFilters((prev) => ({
-      ...prev,
-      ingredients: (prev.ingredients || []).filter((i) => i !== ing),
-    }));
+  const toggleSingle = (key, val) => {
+    setLocal((p) => ({ ...p, [key]: p[key] === val ? null : val }));
+  };
+
+  const addInclude = (raw) => {
+    const t = (raw || ingQ).trim();
+    if (!t) return;
+    setLocal((p) => {
+      const arr = [...(p.ingredientsInclude || [])];
+      if (!arr.some((x) => x.toLowerCase() === t.toLowerCase())) arr.push(t);
+      return { ...p, ingredientsInclude: arr };
+    });
+    setIngQ('');
+    setShowIngSuggest(false);
+  };
+
+  const addExclude = (raw) => {
+    const t = (raw || exQ).trim();
+    if (!t) return;
+    setLocal((p) => {
+      const arr = [...(p.ingredientsExclude || [])];
+      if (!arr.some((x) => x.toLowerCase() === t.toLowerCase())) arr.push(t);
+      return { ...p, ingredientsExclude: arr };
+    });
+    setExQ('');
+    setShowExSuggest(false);
   };
 
   const reset = () => {
-    setLocalFilters(EMPTY_FILTERS);
-    setIngredientQuery('');
-    setShowSuggestions(false);
+    setLocal({ ...EMPTY_RECIPE_FILTERS });
+    setIngQ('');
+    setExQ('');
   };
 
   const apply = () => {
-    onApply(localFilters);
+    onApply({ ...local });
     onClose();
   };
 
-  const totalActive =
-    (localFilters.mealType?.length || 0) +
-    (localFilters.diet?.length || 0) +
-    (localFilters.cookTime?.length || 0) +
-    (localFilters.nutrition?.length || 0) +
-    (localFilters.ingredients?.length || 0) +
-    (localFilters.applyPreferences ? 1 : 0) +
-    (localFilters.savedOnly ? 1 : 0);
-
-  const filteredSuggestions = INGREDIENT_SUGGESTIONS.filter(
+  const totalActive = countActiveFilters(local);
+  const sugIng = INGREDIENT_SUGGESTIONS.filter(
     (s) =>
-      ingredientQuery.length === 0 ||
-      s.toLowerCase().includes(ingredientQuery.toLowerCase())
-  ).filter((s) => !ingredients.map((i) => i.toLowerCase()).includes(s.toLowerCase()));
+      !local.ingredientsInclude?.some((i) => i.toLowerCase() === s) &&
+      (ingQ.length === 0 || s.includes(ingQ.toLowerCase()))
+  ).slice(0, 8);
+  const sugEx = INGREDIENT_SUGGESTIONS.filter(
+    (s) =>
+      !local.ingredientsExclude?.some((i) => i.toLowerCase() === s) &&
+      (exQ.length === 0 || s.includes(exQ.toLowerCase()))
+  ).slice(0, 8);
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>Filters</Text>
+          <Text style={styles.headerTitle}>Filter Recipes</Text>
           {totalActive > 0 && (
             <View style={styles.headerBadge}>
               <Text style={styles.headerBadgeText}>{totalActive}</Text>
             </View>
           )}
           <View style={{ flex: 1 }} />
-          <TouchableOpacity onPress={onClose} activeOpacity={0.7} style={styles.closeBtn}>
+          <TouchableOpacity onPress={onClose} style={styles.closeBtn} activeOpacity={0.7}>
             <X size={20} color={Colors.textPrimary} />
           </TouchableOpacity>
         </View>
@@ -210,120 +246,198 @@ export default function RecipeFilterSheet({ visible, filters, onApply, onClose }
           contentContainerStyle={styles.scrollContent}
         >
           <View style={styles.section}>
-            <View style={styles.sectionTitleRow}>
-              <Text style={styles.sectionTitle}>Search by ingredients</Text>
-              <TouchableOpacity onPress={() => addIngredient()} activeOpacity={0.7}>
-                <View style={styles.addBtn}>
-                  <Plus size={14} color={Colors.primary} />
-                  <Text style={styles.addBtnText}>Add</Text>
-                </View>
-              </TouchableOpacity>
-            </View>
+            <SectionTitle title="Sort by" count={local.sortBy !== 'relevance' ? 1 : 0} />
+            <ChipGrid
+              options={SORT_OPTIONS}
+              selected={local.sortBy}
+              singleKey
+              onToggle={(val) => sync({ sortBy: local.sortBy === val ? 'relevance' : val })}
+              expanded
+            />
+            <View style={styles.divider} />
+          </View>
 
-            <View style={styles.ingredientSearch}>
-              <Search size={16} color={Colors.textTertiary} />
-              <TextInput
-                ref={inputRef}
-                style={styles.ingredientInput}
-                placeholder="e.g. chicken, banana, oats..."
-                placeholderTextColor={Colors.textTertiary}
-                value={ingredientQuery}
-                onChangeText={(t) => {
-                  setIngredientQuery(t);
-                  setShowSuggestions(true);
-                }}
-                onFocus={() => setShowSuggestions(true)}
-                onSubmitEditing={() => addIngredient()}
-                returnKeyType="done"
-              />
-              {ingredientQuery.length > 0 && (
-                <TouchableOpacity onPress={() => { setIngredientQuery(''); setShowSuggestions(false); }} activeOpacity={0.7}>
-                  <X size={15} color={Colors.textTertiary} />
-                </TouchableOpacity>
-              )}
-            </View>
+          <View style={styles.section}>
+            <SectionTitle title="Meal type" count={local.mealType?.length || 0} />
+            <MultiChipRow
+              options={MEAL_TYPES}
+              selected={local.mealType || []}
+              onToggle={(v) => toggleArr('mealType', v)}
+              expanded={expandMeal}
+              onExpand={() => setExpandMeal(!expandMeal)}
+              limit={5}
+            />
+            <View style={styles.divider} />
+          </View>
 
-            {showSuggestions && filteredSuggestions.length > 0 && (
-              <View style={styles.suggestionsBox}>
-                {filteredSuggestions.slice(0, 6).map((s) => (
-                  <TouchableOpacity
-                    key={s}
-                    style={styles.suggestionRow}
-                    onPress={() => addIngredient(s)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={styles.ingAvatar}>
-                      <Text style={styles.ingAvatarText}>{s.charAt(0)}</Text>
-                    </View>
-                    <Text style={styles.suggestionText}>{s}</Text>
-                    <Plus size={14} color={Colors.textTertiary} />
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
+          <View style={styles.section}>
+            <SectionTitle title="Nutrition goal" count={local.nutritionGoal?.length || 0} />
+            <MultiChipRow
+              options={NUTRITION_GOALS}
+              selected={local.nutritionGoal || []}
+              onToggle={(v) => toggleArr('nutritionGoal', v)}
+              expanded={expandDiet}
+              onExpand={() => setExpandDiet(!expandDiet)}
+              limit={5}
+            />
+            <View style={styles.divider} />
+          </View>
 
-            {ingredients.length > 0 && (
-              <View style={styles.ingChipRow}>
-                {ingredients.map((ing) => (
-                  <IngredientChip key={ing} label={ing} onRemove={() => removeIngredient(ing)} />
-                ))}
+          <View style={styles.section}>
+            <SectionTitle title="Calories (per serving)" count={local.calorieRange ? 1 : 0} />
+            <ChipGrid
+              options={CALORIE_PRESETS}
+              selected={local.calorieRange}
+              singleKey
+              onToggle={(v) => toggleSingle('calorieRange', v)}
+              expanded
+            />
+            {local.calorieRange === 'custom' && (
+              <View style={styles.customRow}>
+                <TextInput
+                  style={styles.customInput}
+                  placeholder="Min"
+                  placeholderTextColor={Colors.textTertiary}
+                  keyboardType="number-pad"
+                  value={local.calorieMin}
+                  onChangeText={(t) => sync({ calorieMin: t })}
+                />
+                <Text style={styles.customSep}>–</Text>
+                <TextInput
+                  style={styles.customInput}
+                  placeholder="Max"
+                  placeholderTextColor={Colors.textTertiary}
+                  keyboardType="number-pad"
+                  value={local.calorieMax}
+                  onChangeText={(t) => sync({ calorieMax: t })}
+                />
               </View>
             )}
             <View style={styles.divider} />
           </View>
 
           <View style={styles.section}>
-            <ToggleRow
-              label="Apply Preferences"
-              value={localFilters.applyPreferences}
-              onToggle={(v) => syncFilters((p) => ({ ...p, applyPreferences: v }))}
-              onEdit={() => {}}
-              editLabel="Edit"
-            />
-            <View style={{ height: 12 }} />
-            <ToggleRow
-              label="Recipes I've Saved"
-              value={localFilters.savedOnly}
-              onToggle={(v) => syncFilters((p) => ({ ...p, savedOnly: v }))}
+            <SectionTitle title="Protein (per serving)" count={local.proteinRange ? 1 : 0} />
+            <ChipGrid options={MACRO_PRESETS} selected={local.proteinRange} singleKey onToggle={(v) => toggleSingle('proteinRange', v)} expanded />
+            <View style={styles.divider} />
+          </View>
+
+          <View style={styles.section}>
+            <SectionTitle title="Carbs (per serving)" count={local.carbsRange ? 1 : 0} />
+            <ChipGrid options={CARB_PRESETS} selected={local.carbsRange} singleKey onToggle={(v) => toggleSingle('carbsRange', v)} expanded />
+            <View style={styles.divider} />
+          </View>
+
+          <View style={styles.section}>
+            <SectionTitle title="Fat (per serving)" count={local.fatRange ? 1 : 0} />
+            <ChipGrid options={FAT_PRESETS} selected={local.fatRange} singleKey onToggle={(v) => toggleSingle('fatRange', v)} expanded />
+            <View style={styles.divider} />
+          </View>
+
+          <View style={styles.section}>
+            <SectionTitle title="Prep time" count={local.prepTime?.length || 0} />
+            <MultiChipRow options={TIME_PRESETS} selected={local.prepTime || []} onToggle={(v) => toggleArr('prepTime', v)} expanded limit={8} />
+            <View style={styles.divider} />
+          </View>
+
+          <View style={styles.section}>
+            <SectionTitle title="Cook time" count={local.cookTime?.length || 0} />
+            <MultiChipRow options={TIME_PRESETS} selected={local.cookTime || []} onToggle={(v) => toggleArr('cookTime', v)} expanded limit={8} />
+            <View style={styles.divider} />
+          </View>
+
+          <View style={styles.section}>
+            <SectionTitle title="Total time" count={local.totalTime?.length || 0} />
+            <MultiChipRow
+              options={TOTAL_TIME_PRESETS.map((x) => x.label)}
+              selected={local.totalTime || []}
+              onToggle={(v) => toggleArr('totalTime', v)}
+              expanded
+              limit={8}
             />
             <View style={styles.divider} />
           </View>
 
-          <FilterSection
-            title="Meal Type"
-            options={RECIPE_FILTER_OPTIONS.mealType}
-            selected={localFilters.mealType}
-            onToggle={(v) => toggleChip('mealType', v)}
-          />
-          <FilterSection
-            title="Diet"
-            options={RECIPE_FILTER_OPTIONS.diet}
-            selected={localFilters.diet}
-            onToggle={(v) => toggleChip('diet', v)}
-          />
-          <FilterSection
-            title="Cook Time"
-            options={RECIPE_FILTER_OPTIONS.cookTime}
-            selected={localFilters.cookTime}
-            onToggle={(v) => toggleChip('cookTime', v)}
-            initialCount={3}
-          />
-          <FilterSection
-            title="Nutrition"
-            options={RECIPE_FILTER_OPTIONS.nutrition}
-            selected={localFilters.nutrition}
-            onToggle={(v) => toggleChip('nutrition', v)}
-            initialCount={7}
-          />
+          <View style={styles.section}>
+            <SectionTitle title="Include ingredients" count={local.ingredientsInclude?.length || 0} />
+            <View style={styles.ingredientSearch}>
+              <Search size={16} color={Colors.textTertiary} />
+              <TextInput
+                style={styles.ingredientInput}
+                placeholder="e.g. chicken, oats…"
+                placeholderTextColor={Colors.textTertiary}
+                value={ingQ}
+                onChangeText={(t) => { setIngQ(t); setShowIngSuggest(true); }}
+                onFocus={() => setShowIngSuggest(true)}
+                onSubmitEditing={() => addInclude()}
+              />
+              <TouchableOpacity onPress={() => addInclude()} activeOpacity={0.7}>
+                <Plus size={18} color={Colors.textPrimary} />
+              </TouchableOpacity>
+            </View>
+            {showIngSuggest && sugIng.length > 0 && (
+              <View style={styles.suggestionsBox}>
+                {sugIng.map((s) => (
+                  <TouchableOpacity key={s} style={styles.suggestionRow} onPress={() => addInclude(s)} activeOpacity={0.7}>
+                    <Text style={styles.suggestionText}>{s}</Text>
+                    <Plus size={14} color={Colors.textTertiary} />
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            <View style={styles.ingChipRow}>
+              {(local.ingredientsInclude || []).map((ing) => (
+                <IngredientChip key={ing} label={ing} onRemove={() => setLocal((p) => ({ ...p, ingredientsInclude: p.ingredientsInclude.filter((x) => x !== ing) }))} />
+              ))}
+            </View>
+            <View style={styles.divider} />
+          </View>
 
-          <View style={{ height: 24 }} />
+          <View style={styles.section}>
+            <SectionTitle title="Exclude ingredients" count={local.ingredientsExclude?.length || 0} />
+            <View style={styles.ingredientSearch}>
+              <Search size={16} color={Colors.textTertiary} />
+              <TextInput
+                style={styles.ingredientInput}
+                placeholder="e.g. dairy, nuts…"
+                placeholderTextColor={Colors.textTertiary}
+                value={exQ}
+                onChangeText={(t) => { setExQ(t); setShowExSuggest(true); }}
+                onFocus={() => setShowExSuggest(true)}
+                onSubmitEditing={() => addExclude()}
+              />
+              <TouchableOpacity onPress={() => addExclude()} activeOpacity={0.7}>
+                <Plus size={18} color={Colors.textPrimary} />
+              </TouchableOpacity>
+            </View>
+            {showExSuggest && sugEx.length > 0 && (
+              <View style={styles.suggestionsBox}>
+                {sugEx.map((s) => (
+                  <TouchableOpacity key={s} style={styles.suggestionRow} onPress={() => addExclude(s)} activeOpacity={0.7}>
+                    <Text style={styles.suggestionText}>{s}</Text>
+                    <Plus size={14} color={Colors.textTertiary} />
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            <View style={styles.ingChipRow}>
+              {(local.ingredientsExclude || []).map((ing) => (
+                <IngredientChip key={ing} label={ing} onRemove={() => setLocal((p) => ({ ...p, ingredientsExclude: p.ingredientsExclude.filter((x) => x !== ing) }))} />
+              ))}
+            </View>
+            <View style={styles.divider} />
+          </View>
+
+          <View style={styles.section}>
+            <SectionTitle title="Dietary preferences" count={local.dietary?.length || 0} />
+            <MultiChipRow options={DIETARY_PREFS} selected={local.dietary || []} onToggle={(v) => toggleArr('dietary', v)} expanded limit={8} />
+            <View style={{ height: 24 }} />
+          </View>
         </ScrollView>
 
         <View style={styles.footer}>
           <TouchableOpacity style={styles.resetBtn} onPress={reset} activeOpacity={0.7}>
-            <Text style={styles.resetText}>
-              {totalActive > 0 ? `Reset (${totalActive})` : 'Reset'}
-            </Text>
+            <Text style={styles.resetText}>{totalActive > 0 ? `Reset (${totalActive})` : 'Reset'}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.applyBtn} onPress={apply} activeOpacity={0.85}>
             <Text style={styles.applyText}>Apply Filters</Text>
@@ -346,12 +460,12 @@ const createStyles = (Colors) => StyleSheet.create({
     gap: 8,
   },
   headerTitle: {
-    fontSize: 22,
+    fontSize: 20,
     fontFamily: 'PlusJakartaSans-Bold',
     color: Colors.textPrimary,
   },
   headerBadge: {
-    backgroundColor: Colors.primary,
+    backgroundColor: Colors.textPrimary,
     borderRadius: 10,
     minWidth: 20,
     height: 20,
@@ -373,174 +487,47 @@ const createStyles = (Colors) => StyleSheet.create({
     justifyContent: 'center',
   },
   scroll: { flex: 1 },
-  scrollContent: { paddingHorizontal: 20, paddingTop: 4 },
-  section: { paddingTop: 20 },
+  scrollContent: { paddingHorizontal: 20, paddingBottom: 8 },
+  section: { paddingTop: 18 },
   sectionTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 14,
+    marginBottom: 12,
+    gap: 8,
   },
   sectionTitle: {
-    fontSize: 17,
+    fontSize: 15,
     fontFamily: 'PlusJakartaSans-Bold',
     color: Colors.textPrimary,
   },
   sectionBadge: {
-    backgroundColor: Colors.primaryLight,
-    borderRadius: 10,
-    minWidth: 20,
-    height: 20,
+    backgroundColor: Colors.background,
+    borderRadius: 8,
+    minWidth: 18,
+    height: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 6,
-    marginLeft: 8,
+    paddingHorizontal: 5,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
   sectionBadgeText: {
-    fontSize: 11,
+    fontSize: 10,
     fontFamily: 'PlusJakartaSans-Bold',
-    color: Colors.primary,
-  },
-  addBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: Colors.primaryLight,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-  },
-  addBtnText: {
-    fontSize: 13,
-    fontFamily: 'PlusJakartaSans-SemiBold',
-    color: Colors.primary,
-  },
-  ingredientSearch: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.background,
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    gap: 10,
-    borderWidth: 1.5,
-    borderColor: Colors.border,
-    marginBottom: 10,
-  },
-  ingredientInput: {
-    flex: 1,
-    fontSize: 15,
-    fontFamily: 'PlusJakartaSans-Regular',
     color: Colors.textPrimary,
-  },
-  suggestionsBox: {
-    backgroundColor: Colors.cardBackground,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    elevation: 4,
-    overflow: 'hidden',
-  },
-  suggestionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    gap: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.divider,
-  },
-  suggestionText: {
-    flex: 1,
-    fontSize: 14,
-    fontFamily: 'PlusJakartaSans-Medium',
-    color: Colors.textPrimary,
-  },
-  ingChipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 4,
-  },
-  ingChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.primaryLight,
-    borderRadius: 20,
-    paddingLeft: 4,
-    paddingRight: 10,
-    paddingVertical: 4,
-    gap: 6,
-    borderWidth: 1,
-    borderColor: '#C8EDE9',
-  },
-  ingAvatar: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  ingAvatarText: {
-    fontSize: 11,
-    fontFamily: 'PlusJakartaSans-Bold',
-    color: Colors.onPrimary,
-  },
-  ingChipLabel: {
-    fontSize: 13,
-    fontFamily: 'PlusJakartaSans-SemiBold',
-    color: Colors.primary,
-    maxWidth: 100,
-  },
-  toggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  toggleLabel: {
-    fontSize: 16,
-    fontFamily: 'PlusJakartaSans-SemiBold',
-    color: Colors.textPrimary,
-    flex: 1,
-  },
-  toggleRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  editLink: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    backgroundColor: Colors.primaryLight,
-    borderRadius: 10,
-  },
-  editLinkText: {
-    fontSize: 13,
-    fontFamily: 'PlusJakartaSans-SemiBold',
-    color: Colors.primary,
   },
   chipWrap: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    marginBottom: 4,
   },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: 22,
-    borderWidth: 1.5,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
     borderColor: Colors.border,
     backgroundColor: Colors.cardBackground,
     gap: 5,
@@ -550,10 +537,10 @@ const createStyles = (Colors) => StyleSheet.create({
     borderColor: Colors.textPrimary,
   },
   chipDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: Colors.primary,
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: Colors.onPrimary,
   },
   chipText: {
     fontSize: 13,
@@ -564,12 +551,30 @@ const createStyles = (Colors) => StyleSheet.create({
     color: Colors.onPrimary,
     fontFamily: 'PlusJakartaSans-SemiBold',
   },
+  customRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 10,
+  },
+  customInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    fontFamily: 'PlusJakartaSans-Regular',
+    color: Colors.textPrimary,
+    backgroundColor: Colors.background,
+  },
+  customSep: { fontSize: 16, color: Colors.textTertiary },
   expandBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingVertical: 10,
-    alignSelf: 'flex-start',
+    paddingVertical: 8,
     marginTop: 4,
   },
   expandText: {
@@ -582,11 +587,72 @@ const createStyles = (Colors) => StyleSheet.create({
     backgroundColor: Colors.border,
     marginTop: 16,
   },
+  ingredientSearch: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.background,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  ingredientInput: {
+    flex: 1,
+    fontSize: 15,
+    fontFamily: 'PlusJakartaSans-Regular',
+    color: Colors.textPrimary,
+  },
+  suggestionsBox: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginTop: 8,
+    overflow: 'hidden',
+  },
+  suggestionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  suggestionText: {
+    fontSize: 14,
+    fontFamily: 'PlusJakartaSans-Medium',
+    color: Colors.textPrimary,
+  },
+  ingChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 10,
+  },
+  ingChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: Colors.background,
+    borderRadius: 16,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  ingChipLabel: {
+    fontSize: 13,
+    fontFamily: 'PlusJakartaSans-SemiBold',
+    color: Colors.textPrimary,
+    maxWidth: 120,
+  },
   footer: {
     flexDirection: 'row',
     gap: 12,
     paddingHorizontal: 20,
-    paddingTop: 14,
+    paddingTop: 12,
     paddingBottom: 24,
     borderTopWidth: 1,
     borderTopColor: Colors.border,
@@ -594,13 +660,12 @@ const createStyles = (Colors) => StyleSheet.create({
   },
   resetBtn: {
     flex: 1,
-    paddingVertical: 16,
+    paddingVertical: 15,
     borderRadius: 16,
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: Colors.border,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: Colors.cardBackground,
   },
   resetText: {
     fontSize: 15,
@@ -609,7 +674,7 @@ const createStyles = (Colors) => StyleSheet.create({
   },
   applyBtn: {
     flex: 2,
-    paddingVertical: 16,
+    paddingVertical: 15,
     borderRadius: 16,
     backgroundColor: Colors.textPrimary,
     alignItems: 'center',

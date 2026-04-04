@@ -7,6 +7,7 @@ import {
   deleteActivityEntry,
   calcTotalCaloriesBurned,
 } from '@/services/activityService';
+import { recalculateDailyLog } from '@/services/dailyLogService';
 
 export function useActivityLog(date) {
   const { user } = useAuth();
@@ -15,13 +16,19 @@ export function useActivityLog(date) {
   const [error, setError] = useState(null);
 
   const load = useCallback(async () => {
-    if (!user || !date) return;
+    if (!user || !date) {
+      setEntries([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
+      setError(null);
       const data = await listActivityEntries(user.uid, date);
       setEntries(data);
     } catch (err) {
-      setError(err.message);
+      setEntries([]);
+      setError(err.message || String(err));
     } finally {
       setLoading(false);
     }
@@ -31,25 +38,41 @@ export function useActivityLog(date) {
     load();
   }, [load]);
 
+  async function syncDashboardDailyLog() {
+    if (!user?.uid || !date) return;
+    try {
+      await recalculateDailyLog(user.uid, date);
+    } catch (e) {
+      console.warn('[Activity] recalculateDailyLog failed', e?.message || e);
+    }
+  }
+
   async function addEntry(data) {
-    if (!user) return;
+    if (!user?.uid) {
+      throw new Error('You must be signed in to save activities.');
+    }
     const id = await addActivityEntry(user.uid, date, data);
     await load();
+    await syncDashboardDailyLog();
     return id;
   }
 
   async function editEntry(entryId, changes) {
-    if (!user) return;
+    if (!user?.uid) {
+      throw new Error('You must be signed in to update activities.');
+    }
     await updateActivityEntry(user.uid, date, entryId, changes);
-    setEntries((prev) =>
-      prev.map((e) => (e.id === entryId ? { ...e, ...changes } : e))
-    );
+    await load();
+    await syncDashboardDailyLog();
   }
 
   async function removeEntry(entryId) {
-    if (!user) return;
+    if (!user?.uid) {
+      throw new Error('You must be signed in to delete activities.');
+    }
     await deleteActivityEntry(user.uid, date, entryId);
-    setEntries((prev) => prev.filter((e) => e.id !== entryId));
+    await load();
+    await syncDashboardDailyLog();
   }
 
   const totalCaloriesBurned = calcTotalCaloriesBurned(entries);

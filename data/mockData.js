@@ -324,7 +324,7 @@ export const allHabitsData = [
     description: 'Practice guitar for 20 minutes', repeatRule: 'specific_days_week', repeatDays: [1, 3, 5],
     startDate: '2026-03-01', endDate: null, endDateEnabled: false, endDateDays: null,
     reminderTime: '19:00', reminderCount: 0, priority: 'low', color: '#E86C5D',
-    isPaused: false, checklistItems: null, sortOrder: 9, isArchived: true,
+    isPaused: false, checklistItems: null, sortOrder: 9, isArchived: false,
     completionHistory: [
       '2026-03-02','2026-03-04','2026-03-06',
     ],

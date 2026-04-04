@@ -55,6 +55,7 @@ export async function createRecipe(uid, data) {
 
   const servings = data.servings || 1;
   const payload = {
+    source: 'user',
     name: data.name,
     description: data.description || '',
     instructions: data.instructions || data.description || '',

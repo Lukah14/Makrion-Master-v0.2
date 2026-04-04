@@ -1,24 +1,21 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
-import { ChevronLeft, ChevronRight, Trophy, Flag, Link2, CircleCheck, ChartPie as PieChart, Award } from 'lucide-react-native';
-import Svg, { Circle, G, Path } from 'react-native-svg';
+import { ChevronLeft, ChevronRight, Trophy, Flag, Link2, CircleCheck, ChartPie as PieChart } from 'lucide-react-native';
+import Svg, { Circle } from 'react-native-svg';
+import { useTheme } from '@/context/ThemeContext';
+import { computeBestStreak, computeCurrentStreak } from '@/lib/habitDayState';
 
-const DARK = '#1A1A1A';
-const CARD = '#2A2A2A';
 const ACCENT = '#E8526A';
 const SUCCESS = '#22C55E';
-const TEXT_PRIMARY = '#FFFFFF';
-const TEXT_SECONDARY = '#9CA3AF';
-const TEXT_MUTED = '#6B7280';
 
-const MONTH_NAMES_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MONTH_NAMES_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const MONTH_NAMES = [
-  'January','February','March','April','May','June',
-  'July','August','September','October','November','December',
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
 function toDateStr(date) {
-  return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
 function getCompletionsInRange(completionHistory, start, end) {
@@ -32,10 +29,9 @@ function getCompletionsInRange(completionHistory, start, end) {
   return count;
 }
 
-function calcStats(habit) {
-  const today = new Date(); today.setHours(0,0,0,0);
-  const history = habit.completionHistory || [];
-  const set = new Set(history);
+function calcStatsFromHistory(history) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
 
   const startOfWeek = new Date(today);
   startOfWeek.setDate(today.getDate() - ((today.getDay() + 6) % 7));
@@ -43,34 +39,36 @@ function calcStats(habit) {
   const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
   const startOfYear = new Date(today.getFullYear(), 0, 1);
 
+  const h = history || [];
   return {
-    thisWeek: getCompletionsInRange(history, startOfWeek, today),
-    thisMonth: getCompletionsInRange(history, startOfMonth, today),
-    thisYear: getCompletionsInRange(history, startOfYear, today),
-    all: history.length,
+    thisWeek: getCompletionsInRange(h, startOfWeek, today),
+    thisMonth: getCompletionsInRange(h, startOfMonth, today),
+    thisYear: getCompletionsInRange(h, startOfYear, today),
+    all: h.length,
   };
 }
 
-function calcHabitScore(habit) {
-  const history = habit.completionHistory || [];
-  if (history.length === 0) return 0;
-  const today = new Date(); today.setHours(0,0,0,0);
+function calcHabitScoreFromHistory(habit, history) {
+  const h = history || [];
+  if (h.length === 0) return 0;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
   const startDate = habit.startDate ? new Date(habit.startDate) : new Date(today.getTime() - 30 * 86400000);
   const diff = Math.max(1, Math.ceil((today - startDate) / 86400000));
-  const rate = Math.min(history.length / diff, 1);
+  const rate = Math.min(h.length / diff, 1);
   return Math.round(rate * 100);
 }
 
-function ScoreRing({ score }) {
+function ScoreRing({ score, trackColor, valueColor }) {
   const r = 68;
   const sw = 12;
   const nr = r - sw / 2;
   const circ = nr * 2 * Math.PI;
   const offset = circ * (1 - score / 100);
   return (
-    <View style={{ width: r*2, height: r*2, alignItems:'center', justifyContent:'center', alignSelf: 'center', marginVertical: 12 }}>
-      <Svg width={r*2} height={r*2}>
-        <Circle stroke="#3A3A3A" fill="none" strokeWidth={sw} cx={r} cy={r} r={nr} />
+    <View style={{ width: r * 2, height: r * 2, alignItems: 'center', justifyContent: 'center', alignSelf: 'center', marginVertical: 12 }}>
+      <Svg width={r * 2} height={r * 2}>
+        <Circle stroke={trackColor} fill="none" strokeWidth={sw} cx={r} cy={r} r={nr} />
         <Circle
           stroke={ACCENT}
           fill="none"
@@ -78,66 +76,61 @@ function ScoreRing({ score }) {
           strokeLinecap="round"
           strokeDasharray={`${circ} ${circ}`}
           strokeDashoffset={offset}
-          cx={r} cy={r} r={nr}
+          cx={r}
+          cy={r}
+          r={nr}
           transform={`rotate(-90, ${r}, ${r})`}
         />
       </Svg>
       <View style={{ position: 'absolute', alignItems: 'center' }}>
-        <Text style={{ fontSize: 32, fontFamily: 'PlusJakartaSans-ExtraBold', color: TEXT_PRIMARY }}>{score}</Text>
+        <Text style={{ fontSize: 32, fontFamily: 'PlusJakartaSans-ExtraBold', color: valueColor }}>{score}</Text>
       </View>
     </View>
   );
 }
 
-function DonutChart({ done, total }) {
+function DonutChart({ done, total, emptyTrackColor, valueColor }) {
   const r = 80;
   const sw = 28;
   const nr = r - sw / 2;
   const circ = nr * 2 * Math.PI;
   const pct = total > 0 ? done / total : 1;
   return (
-    <View style={{ width: r*2, height: r*2, alignItems:'center', justifyContent:'center', alignSelf: 'center', marginVertical: 8 }}>
-      <Svg width={r*2} height={r*2}>
-        <Circle stroke={SUCCESS} fill="none" strokeWidth={sw} cx={r} cy={r} r={nr} strokeDasharray={`${circ*pct} ${circ*(1-pct)}`} strokeDashoffset={circ*0.25} />
+    <View style={{ width: r * 2, height: r * 2, alignItems: 'center', justifyContent: 'center', alignSelf: 'center', marginVertical: 8 }}>
+      <Svg width={r * 2} height={r * 2}>
+        <Circle stroke={SUCCESS} fill="none" strokeWidth={sw} cx={r} cy={r} r={nr} strokeDasharray={`${circ * pct} ${circ * (1 - pct)}`} strokeDashoffset={circ * 0.25} />
         {total > 0 && pct < 1 && (
-          <Circle stroke="#3A3A3A" fill="none" strokeWidth={sw} cx={r} cy={r} r={nr} strokeDasharray={`${circ*(1-pct)} ${circ*pct}`} strokeDashoffset={-(circ*pct - circ*0.25)} />
+          <Circle stroke={emptyTrackColor} fill="none" strokeWidth={sw} cx={r} cy={r} r={nr} strokeDasharray={`${circ * (1 - pct)} ${circ * pct}`} strokeDashoffset={-(circ * pct - circ * 0.25)} />
         )}
       </Svg>
       <View style={{ position: 'absolute', alignItems: 'center' }}>
-        <Text style={{ fontSize: 24, fontFamily: 'PlusJakartaSans-ExtraBold', color: TEXT_PRIMARY }}>{done}</Text>
+        <Text style={{ fontSize: 24, fontFamily: 'PlusJakartaSans-ExtraBold', color: valueColor }}>{done}</Text>
       </View>
     </View>
   );
 }
 
-function StreakBadge({ label, days, unlocked }) {
-  return (
-    <View style={styles.badgeItem}>
-      <View style={[styles.badgeCircle, unlocked ? styles.badgeUnlocked : styles.badgeLocked]}>
-        {unlocked ? (
-          <Text style={{ fontSize: 22 }}>⭐</Text>
-        ) : (
-          <Text style={{ fontSize: 18, color: TEXT_MUTED }}>🔒</Text>
-        )}
-      </View>
-      <Text style={[styles.badgeLabel, unlocked && styles.badgeLabelUnlocked]}>{label}</Text>
-    </View>
-  );
-}
+export default function HabitDetailStatistics({ habit, completionHistory: historyProp = [] }) {
+  const { colors: Colors } = useTheme();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
 
-const STREAK_MILESTONES = [1, 7, 15, 30, 60, 100, 365];
-
-export default function HabitDetailStatistics({ habit }) {
-  const today = new Date(); today.setHours(0,0,0,0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
   const [chartPeriod, setChartPeriod] = useState('Month');
   const [chartMonth, setChartMonth] = useState(today.getMonth());
   const [chartYear, setChartYear] = useState(today.getFullYear());
   const [timelineMonth, setTimelineMonth] = useState(today.getMonth());
   const [timelineYear, setTimelineYear] = useState(today.getFullYear());
 
-  const score = calcHabitScore(habit);
-  const stats = calcStats(habit);
-  const completedSet = new Set(habit.completionHistory || []);
+  const history =
+    historyProp.length > 0 ? historyProp : (habit.completionHistory || []);
+
+  const score = calcHabitScoreFromHistory(habit, history);
+  const stats = calcStatsFromHistory(history);
+  const completedSet = new Set(history);
+  const todayStr = toDateStr(today);
+  const streakCurrent = computeCurrentStreak(history, todayStr);
+  const streakBest = computeBestStreak(history);
 
   const startDate = habit.startDate || toDateStr(today);
   const endDate = habit.endDate || null;
@@ -145,7 +138,7 @@ export default function HabitDetailStatistics({ habit }) {
   const totalDays = endDate
     ? Math.ceil((new Date(endDate) - startDateObj) / 86400000)
     : null;
-  const daysCompleted = habit.completionHistory?.length || 0;
+  const daysCompleted = history.length || 0;
 
   const habitProgressLabel = totalDays
     ? `${daysCompleted}/${totalDays} DAYS`
@@ -156,7 +149,6 @@ export default function HabitDetailStatistics({ habit }) {
     : 0;
 
   const timelineDays = [];
-  const tlFirst = new Date(timelineYear, timelineMonth, 1);
   const tlLast = new Date(timelineYear, timelineMonth + 1, 0);
   for (let d = 1; d <= Math.min(14, tlLast.getDate()); d++) {
     const dt = new Date(timelineYear, timelineMonth, d);
@@ -165,12 +157,16 @@ export default function HabitDetailStatistics({ habit }) {
   }
 
   const prevTimeline = () => {
-    if (timelineMonth === 0) { setTimelineMonth(11); setTimelineYear(timelineYear - 1); }
-    else setTimelineMonth(timelineMonth - 1);
+    if (timelineMonth === 0) {
+      setTimelineMonth(11);
+      setTimelineYear(timelineYear - 1);
+    } else setTimelineMonth(timelineMonth - 1);
   };
   const nextTimeline = () => {
-    if (timelineMonth === 11) { setTimelineMonth(0); setTimelineYear(timelineYear + 1); }
-    else setTimelineMonth(timelineMonth + 1);
+    if (timelineMonth === 11) {
+      setTimelineMonth(0);
+      setTimelineYear(timelineYear + 1);
+    } else setTimelineMonth(timelineMonth + 1);
   };
 
   const getBarData = () => {
@@ -178,13 +174,13 @@ export default function HabitDetailStatistics({ habit }) {
       return MONTH_NAMES_SHORT.map((label, mi) => {
         const start = new Date(chartYear, mi, 1);
         const end = new Date(chartYear, mi + 1, 0);
-        return { label, count: getCompletionsInRange(habit.completionHistory, start, end) };
+        return { label, count: getCompletionsInRange(history, start, end) };
       });
     }
     if (chartPeriod === 'Week') {
       const startOfWeek = new Date(today);
       startOfWeek.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-      const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+      const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
       return days.map((label, i) => {
         const d = new Date(startOfWeek);
         d.setDate(startOfWeek.getDate() + i);
@@ -204,23 +200,30 @@ export default function HabitDetailStatistics({ habit }) {
   const prevChart = () => {
     if (chartPeriod === 'Year') setChartYear(chartYear - 1);
     else if (chartPeriod === 'Month') {
-      if (chartMonth === 0) { setChartMonth(11); setChartYear(chartYear - 1); }
-      else setChartMonth(chartMonth - 1);
+      if (chartMonth === 0) {
+        setChartMonth(11);
+        setChartYear(chartYear - 1);
+      } else setChartMonth(chartMonth - 1);
     }
   };
   const nextChart = () => {
     if (chartPeriod === 'Year') setChartYear(chartYear + 1);
     else if (chartPeriod === 'Month') {
-      if (chartMonth === 11) { setChartMonth(0); setChartYear(chartYear + 1); }
-      else setChartMonth(chartMonth + 1);
+      if (chartMonth === 11) {
+        setChartMonth(0);
+        setChartYear(chartYear + 1);
+      } else setChartMonth(chartMonth + 1);
     }
   };
 
   const chartTitle = chartPeriod === 'Year'
     ? String(chartYear)
     : chartPeriod === 'Week'
-    ? 'This Week'
-    : `${MONTH_NAMES[chartMonth]} ${chartYear}`;
+      ? 'This Week'
+      : `${MONTH_NAMES[chartMonth]} ${chartYear}`;
+
+  const trackColor = Colors.innerBorder;
+  const chartText = Colors.textPrimary;
 
   return (
     <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
@@ -229,7 +232,7 @@ export default function HabitDetailStatistics({ habit }) {
           <Trophy size={18} color={ACCENT} />
           <View style={styles.pill}><Text style={styles.pillText}>Habit score</Text></View>
         </View>
-        <ScoreRing score={score} />
+        <ScoreRing score={score} trackColor={trackColor} valueColor={chartText} />
       </View>
 
       {totalDays && (
@@ -257,12 +260,12 @@ export default function HabitDetailStatistics({ habit }) {
         <View style={styles.streakRow}>
           <View style={styles.streakCol}>
             <Text style={styles.streakLabel}>Current</Text>
-            <Text style={styles.streakValue}>{habit.streak || 0} {(habit.streak || 0) === 1 ? 'DAY' : 'DAYS'}</Text>
+            <Text style={styles.streakValue}>{streakCurrent} {streakCurrent === 1 ? 'DAY' : 'DAYS'}</Text>
           </View>
           <View style={styles.streakDivider} />
           <View style={styles.streakCol}>
             <Text style={styles.streakLabel}>Best</Text>
-            <Text style={styles.streakValue}>{habit.bestStreak || 0} {(habit.bestStreak || 0) === 1 ? 'DAY' : 'DAYS'}</Text>
+            <Text style={styles.streakValue}>{streakBest} {streakBest === 1 ? 'DAY' : 'DAYS'}</Text>
           </View>
         </View>
       </View>
@@ -346,28 +349,11 @@ export default function HabitDetailStatistics({ habit }) {
           <PieChart size={18} color={ACCENT} />
           <View style={styles.pill}><Text style={styles.pillText}>Success / Fail</Text></View>
         </View>
-        <DonutChart done={stats.all} total={Math.max(stats.all, 1)} />
+        <DonutChart done={stats.all} total={Math.max(stats.all, 1)} emptyTrackColor={trackColor} valueColor={chartText} />
         <View style={styles.legendRow}>
           <View style={styles.legendDot} />
           <Text style={styles.legendText}>Done</Text>
         </View>
-      </View>
-
-      <View style={[styles.section, { marginBottom: 16 }]}>
-        <View style={styles.sectionHeader}>
-          <Award size={18} color={ACCENT} />
-          <View style={styles.pill}><Text style={styles.pillText}>Streak challenge</Text></View>
-        </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
-          {STREAK_MILESTONES.map((days) => (
-            <StreakBadge
-              key={days}
-              label={`${days} ${days === 1 ? 'day' : 'days'}`}
-              days={days}
-              unlocked={(habit.bestStreak || 0) >= days}
-            />
-          ))}
-        </ScrollView>
       </View>
 
       <View style={{ height: 40 }} />
@@ -375,267 +361,239 @@ export default function HabitDetailStatistics({ habit }) {
   );
 }
 
-const styles = StyleSheet.create({
-  scroll: {
-    flex: 1,
-    backgroundColor: DARK,
-  },
-  section: {
-    backgroundColor: CARD,
-    marginHorizontal: 16,
-    marginTop: 12,
-    borderRadius: 16,
-    padding: 20,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 4,
-  },
-  pill: {
-    backgroundColor: '#3A3A3A',
-    paddingHorizontal: 14,
-    paddingVertical: 4,
-    borderRadius: 20,
-  },
-  pillText: {
-    fontSize: 14,
-    fontFamily: 'PlusJakartaSans-SemiBold',
-    color: TEXT_PRIMARY,
-  },
-  progressFraction: {
-    fontSize: 20,
-    fontFamily: 'PlusJakartaSans-ExtraBold',
-    color: ACCENT,
-    textAlign: 'center',
-    marginVertical: 10,
-  },
-  progressBarOuter: {
-    height: 6,
-    backgroundColor: '#3A3A3A',
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  progressBarFill: {
-    height: '100%',
-    backgroundColor: ACCENT,
-    borderRadius: 3,
-  },
-  progressDates: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 8,
-  },
-  progressDateText: {
-    fontSize: 11,
-    color: TEXT_MUTED,
-    lineHeight: 16,
-  },
-  streakRow: {
-    flexDirection: 'row',
-    marginTop: 12,
-  },
-  streakCol: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 6,
-  },
-  streakDivider: {
-    width: 1,
-    backgroundColor: '#3A3A3A',
-    marginVertical: 4,
-  },
-  streakLabel: {
-    fontSize: 13,
-    color: TEXT_SECONDARY,
-  },
-  streakValue: {
-    fontSize: 18,
-    fontFamily: 'PlusJakartaSans-ExtraBold',
-    color: ACCENT,
-  },
-  statRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-  },
-  statRowBorder: {
-    borderBottomWidth: 1,
-    borderBottomColor: '#3A3A3A',
-  },
-  statLabel: {
-    fontSize: 15,
-    color: TEXT_PRIMARY,
-  },
-  statValue: {
-    fontSize: 15,
-    fontFamily: 'PlusJakartaSans-Bold',
-    color: TEXT_PRIMARY,
-  },
-  timelineNav: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-  navBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  chartTitle: {
-    fontSize: 16,
-    fontFamily: 'PlusJakartaSans-Bold',
-    color: TEXT_PRIMARY,
-    textAlign: 'center',
-  },
-  timeline: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 4,
-    paddingBottom: 8,
-    position: 'relative',
-  },
-  timelineLine: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 22,
-    height: 1,
-    backgroundColor: '#3A3A3A',
-  },
-  timelineItem: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 4,
-  },
-  timelineCheckBadge: {
-    marginBottom: 2,
-  },
-  timelineDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#3A3A3A',
-  },
-  timelineDotDone: {
-    backgroundColor: SUCCESS,
-  },
-  timelineDayNum: {
-    fontSize: 10,
-    color: TEXT_MUTED,
-  },
-  timelineDayNumDone: {
-    color: TEXT_PRIMARY,
-    fontFamily: 'PlusJakartaSans-SemiBold',
-  },
-  barChart: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    height: 120,
-    gap: 3,
-    marginBottom: 12,
-  },
-  barCol: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    gap: 2,
-  },
-  barCount: {
-    fontSize: 9,
-    color: TEXT_SECONDARY,
-  },
-  barOuter: {
-    width: '100%',
-    height: 80,
-    justifyContent: 'flex-end',
-  },
-  barFill: {
-    width: '100%',
-    backgroundColor: ACCENT,
-    borderRadius: 3,
-    minHeight: 2,
-  },
-  barLabel: {
-    fontSize: 8,
-    color: TEXT_MUTED,
-    textAlign: 'center',
-  },
-  periodToggle: {
-    flexDirection: 'row',
-    backgroundColor: '#1A1A1A',
-    borderRadius: 12,
-    padding: 3,
-    gap: 3,
-  },
-  periodBtn: {
-    flex: 1,
-    paddingVertical: 8,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  periodBtnActive: {
-    backgroundColor: ACCENT + '33',
-  },
-  periodBtnText: {
-    fontSize: 13,
-    fontFamily: 'PlusJakartaSans-SemiBold',
-    color: TEXT_MUTED,
-  },
-  periodBtnTextActive: {
-    color: ACCENT,
-  },
-  legendRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    marginTop: 4,
-  },
-  legendDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: SUCCESS,
-  },
-  legendText: {
-    fontSize: 13,
-    color: TEXT_SECONDARY,
-  },
-  badgeItem: {
-    alignItems: 'center',
-    marginRight: 16,
-    width: 70,
-  },
-  badgeCircle: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 6,
-  },
-  badgeUnlocked: {
-    backgroundColor: '#3A3A1A',
-    borderWidth: 2,
-    borderColor: '#F5A623',
-  },
-  badgeLocked: {
-    backgroundColor: '#2A2A2A',
-    borderWidth: 1,
-    borderColor: '#3A3A3A',
-  },
-  badgeLabel: {
-    fontSize: 11,
-    color: TEXT_MUTED,
-    textAlign: 'center',
-  },
-  badgeLabelUnlocked: {
-    color: '#F5A623',
-    fontFamily: 'PlusJakartaSans-SemiBold',
-  },
-});
+function createStyles(Colors) {
+  return StyleSheet.create({
+    scroll: {
+      flex: 1,
+      backgroundColor: Colors.background,
+    },
+    section: {
+      backgroundColor: Colors.cardBackground,
+      marginHorizontal: 16,
+      marginTop: 12,
+      borderRadius: 16,
+      padding: 20,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: Colors.border,
+    },
+    sectionHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      marginBottom: 4,
+    },
+    pill: {
+      backgroundColor: Colors.innerCard,
+      paddingHorizontal: 14,
+      paddingVertical: 4,
+      borderRadius: 20,
+    },
+    pillText: {
+      fontSize: 14,
+      fontFamily: 'PlusJakartaSans-SemiBold',
+      color: Colors.textPrimary,
+    },
+    progressFraction: {
+      fontSize: 20,
+      fontFamily: 'PlusJakartaSans-ExtraBold',
+      color: ACCENT,
+      textAlign: 'center',
+      marginVertical: 10,
+    },
+    progressBarOuter: {
+      height: 6,
+      backgroundColor: Colors.innerBorder,
+      borderRadius: 3,
+      overflow: 'hidden',
+    },
+    progressBarFill: {
+      height: '100%',
+      backgroundColor: ACCENT,
+      borderRadius: 3,
+    },
+    progressDates: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      marginTop: 8,
+    },
+    progressDateText: {
+      fontSize: 11,
+      color: Colors.textTertiary,
+      lineHeight: 16,
+    },
+    streakRow: {
+      flexDirection: 'row',
+      marginTop: 12,
+    },
+    streakCol: {
+      flex: 1,
+      alignItems: 'center',
+      gap: 6,
+    },
+    streakDivider: {
+      width: StyleSheet.hairlineWidth,
+      backgroundColor: Colors.innerBorder,
+      marginVertical: 4,
+    },
+    streakLabel: {
+      fontSize: 13,
+      color: Colors.textSecondary,
+    },
+    streakValue: {
+      fontSize: 18,
+      fontFamily: 'PlusJakartaSans-ExtraBold',
+      color: ACCENT,
+    },
+    statRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      paddingVertical: 12,
+    },
+    statRowBorder: {
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: Colors.border,
+    },
+    statLabel: {
+      fontSize: 15,
+      color: Colors.textPrimary,
+    },
+    statValue: {
+      fontSize: 15,
+      fontFamily: 'PlusJakartaSans-Bold',
+      color: Colors.textPrimary,
+    },
+    timelineNav: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 16,
+    },
+    navBtn: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    chartTitle: {
+      fontSize: 16,
+      fontFamily: 'PlusJakartaSans-Bold',
+      color: Colors.textPrimary,
+      textAlign: 'center',
+    },
+    timeline: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      gap: 4,
+      paddingBottom: 8,
+      position: 'relative',
+    },
+    timelineLine: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      bottom: 22,
+      height: 1,
+      backgroundColor: Colors.innerBorder,
+    },
+    timelineItem: {
+      flex: 1,
+      alignItems: 'center',
+      gap: 4,
+    },
+    timelineCheckBadge: {
+      marginBottom: 2,
+    },
+    timelineDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      backgroundColor: Colors.innerBorder,
+    },
+    timelineDotDone: {
+      backgroundColor: SUCCESS,
+    },
+    timelineDayNum: {
+      fontSize: 10,
+      color: Colors.textTertiary,
+    },
+    timelineDayNumDone: {
+      color: Colors.textPrimary,
+      fontFamily: 'PlusJakartaSans-SemiBold',
+    },
+    barChart: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      height: 120,
+      gap: 3,
+      marginBottom: 12,
+    },
+    barCol: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      gap: 2,
+    },
+    barCount: {
+      fontSize: 9,
+      color: Colors.textSecondary,
+    },
+    barOuter: {
+      width: '100%',
+      height: 80,
+      justifyContent: 'flex-end',
+    },
+    barFill: {
+      width: '100%',
+      backgroundColor: ACCENT,
+      borderRadius: 3,
+      minHeight: 2,
+    },
+    barLabel: {
+      fontSize: 8,
+      color: Colors.textTertiary,
+      textAlign: 'center',
+    },
+    periodToggle: {
+      flexDirection: 'row',
+      backgroundColor: Colors.innerCard,
+      borderRadius: 12,
+      padding: 3,
+      gap: 3,
+    },
+    periodBtn: {
+      flex: 1,
+      paddingVertical: 8,
+      borderRadius: 10,
+      alignItems: 'center',
+    },
+    periodBtnActive: {
+      backgroundColor: Colors.primaryLight,
+    },
+    periodBtnText: {
+      fontSize: 13,
+      fontFamily: 'PlusJakartaSans-SemiBold',
+      color: Colors.textSecondary,
+    },
+    periodBtnTextActive: {
+      color: ACCENT,
+    },
+    legendRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      marginTop: 4,
+    },
+    legendDot: {
+      width: 10,
+      height: 10,
+      borderRadius: 5,
+      backgroundColor: SUCCESS,
+    },
+    legendText: {
+      fontSize: 13,
+      color: Colors.textSecondary,
+    },
+  });
+}

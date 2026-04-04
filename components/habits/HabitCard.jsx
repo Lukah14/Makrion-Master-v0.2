@@ -1,9 +1,10 @@
-import { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Pressable } from 'react-native';
-import { Check, Plus, Minus, Play, Square, RotateCcw, Flame } from 'lucide-react-native';
+import { useState, useEffect, useCallback } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Pressable, TextInput, Keyboard } from 'react-native';
+import { Check, Plus, Minus, Play, Pause, Square, RotateCcw } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import { Layout } from '@/constants/layout';
 import { habitIconMap, getIconForCategory } from './habitIconMap';
+import { timerTargetToSeconds } from '@/lib/habitDayState';
 
 function ChecklistExpanded({ items, onToggleItem }) {
   const { colors: Colors } = useTheme();
@@ -29,19 +30,101 @@ function ChecklistExpanded({ items, onToggleItem }) {
   );
 }
 
-function NumericExpanded({ current, target, unit, onIncrement, onDecrement }) {
+function NumericExpanded({
+  current,
+  target,
+  unit,
+  onIncrement,
+  onDecrement,
+  onSetNumericCurrent,
+}) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(String(current ?? 0));
+
+  const targetNum = Math.max(Number(target) || 1, 1);
+  const cur = Number(current) || 0;
+
+  useEffect(() => {
+    if (!editing) setDraft(String(cur));
+  }, [cur, editing]);
+
+  const commit = useCallback(() => {
+    if (!onSetNumericCurrent) {
+      setEditing(false);
+      return;
+    }
+    const trimmed = draft.replace(/\s/g, '');
+    if (trimmed === '') {
+      setDraft(String(cur));
+      setEditing(false);
+      return;
+    }
+    if (!/^\d+$/.test(trimmed)) {
+      setDraft(String(cur));
+      setEditing(false);
+      return;
+    }
+    const n = parseInt(trimmed, 10);
+    if (!Number.isFinite(n) || n < 0) {
+      setDraft(String(cur));
+      setEditing(false);
+      return;
+    }
+    const capped = Math.min(n, 9_999_999);
+    onSetNumericCurrent(capped);
+    setEditing(false);
+    Keyboard.dismiss();
+  }, [draft, cur, onSetNumericCurrent]);
+
+  const wrapDec = () => {
+    setEditing(false);
+    onDecrement();
+  };
+  const wrapInc = () => {
+    setEditing(false);
+    onIncrement();
+  };
+
   return (
     <View style={styles.expandedSection}>
       <View style={styles.numericRow}>
-        <TouchableOpacity style={styles.numericBtn} onPress={onDecrement} activeOpacity={0.7}>
+        <TouchableOpacity style={styles.numericBtn} onPress={wrapDec} activeOpacity={0.7}>
           <Minus size={16} color={Colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={styles.numericValue}>
-          {current} / {target} {unit}
-        </Text>
-        <TouchableOpacity style={styles.numericBtn} onPress={onIncrement} activeOpacity={0.7}>
+        <View style={styles.numericValueBlock}>
+          {editing ? (
+            <TextInput
+              style={styles.numericInput}
+              value={draft}
+              onChangeText={(t) => setDraft(t.replace(/[^\d]/g, ''))}
+              keyboardType="number-pad"
+              selectTextOnFocus
+              autoFocus
+              onSubmitEditing={commit}
+              onBlur={commit}
+            />
+          ) : (
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={() => {
+                setDraft(String(cur));
+                setEditing(true);
+              }}
+              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+            >
+              <Text style={styles.numericValue}>
+                {cur}
+                <Text style={styles.numericValueRest}>
+                  {' '}
+                  / {target} {unit}
+                </Text>
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+        <TouchableOpacity style={styles.numericBtn} onPress={wrapInc} activeOpacity={0.7}>
           <Plus size={16} color={Colors.textPrimary} />
         </TouchableOpacity>
       </View>
@@ -49,7 +132,7 @@ function NumericExpanded({ current, target, unit, onIncrement, onDecrement }) {
         <View
           style={[
             styles.progressFill,
-            { width: `${Math.min((current / target) * 100, 100)}%` },
+            { width: `${Math.min((cur / targetNum) * 100, 100)}%` },
           ]}
         />
       </View>
@@ -57,23 +140,58 @@ function NumericExpanded({ current, target, unit, onIncrement, onDecrement }) {
   );
 }
 
-function TimerExpanded({ current, target, unit, isRunning, onStart, onStop, onReset }) {
+function formatDuration(totalSec) {
+  const s = Math.max(0, Math.floor(Number(totalSec) || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = s % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`;
+  return `${m}:${String(r).padStart(2, '0')}`;
+}
+
+function TimerExpanded({
+  elapsedSec,
+  targetSec,
+  unit,
+  isRunning,
+  onStart,
+  onPause,
+  onStop,
+  onReset,
+}) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
+  const ts = Math.max(1, Number(targetSec) || 1);
+  const es = Math.max(0, Number(elapsedSec) || 0);
+  const pct = Math.min((es / ts) * 100, 100);
+
   return (
     <View style={styles.expandedSection}>
       <Text style={styles.timerValue}>
-        {current} / {target} {unit}
+        {formatDuration(es)}
+        <Text style={styles.timerValueRest}>
+          {' '}
+          / {formatDuration(ts)}
+          {unit ? ` ${unit}` : ''}
+        </Text>
       </Text>
+      <View style={[styles.progressBar, { marginBottom: 10 }]}>
+        <View style={[styles.progressFill, { width: `${pct}%` }]} />
+      </View>
       <View style={styles.timerControls}>
         {!isRunning ? (
           <TouchableOpacity style={styles.timerBtn} onPress={onStart} activeOpacity={0.7}>
             <Play size={16} color={Colors.onPrimary} />
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity style={styles.timerBtn} onPress={onStop} activeOpacity={0.7}>
-            <Square size={16} color={Colors.onPrimary} />
-          </TouchableOpacity>
+          <>
+            <TouchableOpacity style={styles.timerBtn} onPress={onPause} activeOpacity={0.7}>
+              <Pause size={16} color={Colors.onPrimary} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.timerBtn} onPress={onStop} activeOpacity={0.7}>
+              <Square size={16} color={Colors.onPrimary} />
+            </TouchableOpacity>
+          </>
         )}
         <TouchableOpacity style={styles.timerBtnSecondary} onPress={onReset} activeOpacity={0.7}>
           <RotateCcw size={16} color={Colors.textSecondary} />
@@ -88,8 +206,11 @@ export default function HabitCard({
   onToggle,
   onIncrement,
   onDecrement,
+  onNumericQuickComplete,
+  onSetNumericCurrent,
   onToggleChecklistItem,
   onTimerStart,
+  onTimerPause,
   onTimerStop,
   onTimerReset,
   onLongPress,
@@ -104,7 +225,9 @@ export default function HabitCard({
       ? habit.completed
       : habit.type === 'checklist'
         ? habit.checklistItems?.every((item) => item.completed)
-        : habit.current >= habit.target;
+        : habit.type === 'timer'
+          ? habit.completed
+          : habit.current >= habit.target;
 
   const handlePress = () => {
     if (habit.type === 'yesno') {
@@ -117,9 +240,13 @@ export default function HabitCard({
   const handleCheckPress = () => {
     if (habit.type === 'yesno') {
       onToggle(habit.id);
-    } else {
-      setExpanded(!expanded);
+      return;
     }
+    if (habit.type === 'numeric' && onNumericQuickComplete) {
+      onNumericQuickComplete(habit.id);
+      return;
+    }
+    setExpanded(!expanded);
   };
 
   return (
@@ -161,16 +288,20 @@ export default function HabitCard({
           unit={habit.unit}
           onIncrement={() => onIncrement(habit.id)}
           onDecrement={() => onDecrement(habit.id)}
+          onSetNumericCurrent={
+            onSetNumericCurrent ? (value) => onSetNumericCurrent(habit.id, value) : undefined
+          }
         />
       )}
 
       {expanded && habit.type === 'timer' && (
         <TimerExpanded
-          current={habit.current}
-          target={habit.target}
+          elapsedSec={habit._timerElapsedSec ?? 0}
+          targetSec={habit._timerTargetSec ?? timerTargetToSeconds(habit)}
           unit={habit.unit}
           isRunning={timerRunning}
           onStart={() => onTimerStart(habit.id)}
+          onPause={() => onTimerPause?.(habit.id)}
           onStop={() => onTimerStop(habit.id)}
           onReset={() => onTimerReset(habit.id)}
         />
@@ -270,12 +401,34 @@ const createStyles = (Colors) => StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  numericValueBlock: {
+    flex: 1,
+    minWidth: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
   numericValue: {
     fontSize: 15,
     fontFamily: 'PlusJakartaSans-SemiBold',
     color: Colors.textPrimary,
-    minWidth: 100,
     textAlign: 'center',
+  },
+  numericValueRest: {
+    fontSize: 14,
+    fontFamily: 'PlusJakartaSans-Medium',
+    color: Colors.textTertiary,
+  },
+  numericInput: {
+    fontSize: 15,
+    fontFamily: 'PlusJakartaSans-SemiBold',
+    color: Colors.textPrimary,
+    minWidth: 72,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    textAlign: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
   },
   progressBar: {
     height: 4,
@@ -294,7 +447,12 @@ const createStyles = (Colors) => StyleSheet.create({
     fontFamily: 'PlusJakartaSans-Bold',
     color: Colors.textPrimary,
     textAlign: 'center',
-    marginBottom: 10,
+    marginBottom: 4,
+  },
+  timerValueRest: {
+    fontSize: 15,
+    fontFamily: 'PlusJakartaSans-Medium',
+    color: Colors.textTertiary,
   },
   timerControls: {
     flexDirection: 'row',

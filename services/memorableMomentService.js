@@ -55,6 +55,10 @@ export async function addMemorableMoment(uid, data) {
     photoUrl: data.photoUrl ?? null,
     achievementTag: data.achievementTag ?? null,
     moodTag: data.moodTag ?? null,
+    moodRating:
+      data.moodRating != null && data.moodRating !== ''
+        ? Math.min(10, Math.max(1, Math.floor(Number(data.moodRating))))
+        : null,
     happenedAt: data.happenedAt ?? null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -68,9 +72,21 @@ export async function addMemorableMoment(uid, data) {
  * @param {string} momentId
  * @param {Object} changes
  */
+function stripUndefined(obj) {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined));
+}
+
 export async function updateMemorableMoment(uid, momentId, changes) {
+  const patch = stripUndefined({ ...changes });
+  if ('moodRating' in patch) {
+    const r = patch.moodRating;
+    patch.moodRating =
+      r != null && r !== ''
+        ? Math.min(10, Math.max(1, Math.floor(Number(r))))
+        : null;
+  }
   await updateDoc(momentRef(uid, momentId), {
-    ...changes,
+    ...patch,
     updatedAt: serverTimestamp(),
   });
 }

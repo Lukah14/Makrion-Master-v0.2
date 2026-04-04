@@ -1,10 +1,18 @@
-import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
-import { Pause, Play, Pencil, Copy, Archive, Trash2, Link2, CalendarDays, ChartBar as BarChart2, CircleCheckBig } from 'lucide-react-native';
+import {
+  View,
+  Text,
+  Image,
+  TouchableOpacity,
+  StyleSheet,
+  Platform,
+  ActionSheetIOS,
+  Alert,
+} from 'react-native';
+import { CalendarDays, ChartBar as BarChartIcon, Pencil } from 'lucide-react-native';
 
 const ICON_MORE = require('@/src/Icons/More.png');
 import { useTheme } from '@/context/ThemeContext';
 import { Layout } from '@/constants/layout';
-import { useState } from 'react';
 import HabitWeekStrip from './HabitWeekStrip';
 import { habitIconMap, getIconForCategory } from './habitIconMap';
 
@@ -20,13 +28,9 @@ const REPEAT_LABELS = {
 function getCompletionRate(completionHistory = []) {
   if (!completionHistory || completionHistory.length === 0) return 0;
   const today = new Date();
-  const thirtyDaysAgo = new Date(today);
-  thirtyDaysAgo.setDate(today.getDate() - 30);
-
+  const set = new Set(completionHistory);
   let scheduled = 0;
   let completed = 0;
-  const set = new Set(completionHistory);
-
   for (let i = 0; i <= 30; i++) {
     const d = new Date(today);
     d.setDate(today.getDate() - i);
@@ -37,18 +41,71 @@ function getCompletionRate(completionHistory = []) {
   return scheduled > 0 ? Math.round((completed / scheduled) * 100) : 0;
 }
 
+function showSecondaryActions(habit, onDuplicate, onTogglePause, onDelete) {
+  const pauseLabel = habit.isPaused ? 'Resume habit' : 'Pause habit';
+  if (Platform.OS === 'ios') {
+    const opts = [pauseLabel, 'Duplicate habit', 'Delete habit', 'Cancel'];
+    ActionSheetIOS.showActionSheetWithOptions(
+      {
+        options: opts,
+        cancelButtonIndex: 3,
+        destructiveButtonIndex: 2,
+      },
+      (idx) => {
+        if (idx === 0) onTogglePause?.(habit);
+        if (idx === 1) onDuplicate?.(habit);
+        if (idx === 2) onDelete?.(habit);
+      },
+    );
+  } else {
+    Alert.alert('More options', habit.name, [
+      { text: pauseLabel, onPress: () => onTogglePause?.(habit) },
+      { text: 'Duplicate habit', onPress: () => onDuplicate?.(habit) },
+      { text: 'Delete habit', style: 'destructive', onPress: () => onDelete?.(habit) },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }
+}
+
+/** (...) opens menu with Edit habit as the primary action (opens Habit Details Edit tab). */
+function openHabitOverflowMenu(habit, onOpenDetail, onDuplicate, onTogglePause, onDelete) {
+  const pauseLabel = habit.isPaused ? 'Resume habit' : 'Pause habit';
+  if (Platform.OS === 'ios') {
+    const opts = ['Edit habit', pauseLabel, 'Duplicate habit', 'Delete habit', 'Cancel'];
+    ActionSheetIOS.showActionSheetWithOptions(
+      {
+        options: opts,
+        cancelButtonIndex: 4,
+        destructiveButtonIndex: 3,
+      },
+      (idx) => {
+        if (idx === 0) onOpenDetail?.(habit, 'Edit');
+        if (idx === 1) onTogglePause?.(habit);
+        if (idx === 2) onDuplicate?.(habit);
+        if (idx === 3) onDelete?.(habit);
+      },
+    );
+  } else {
+    Alert.alert('Habit', habit.name, [
+      { text: 'Edit habit', onPress: () => onOpenDetail?.(habit, 'Edit') },
+      {
+        text: 'More options',
+        onPress: () => showSecondaryActions(habit, onDuplicate, onTogglePause, onDelete),
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }
+}
+
 export default function HabitManageCard({
   habit,
-  onEdit,
   onDuplicate,
-  onArchive,
   onDelete,
   onTogglePause,
   onOpenDetail,
 }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
-  const [showMenu, setShowMenu] = useState(false);
   const completionRate = getCompletionRate(habit.completionHistory);
 
   return (
@@ -58,6 +115,14 @@ export default function HabitManageCard({
           <Text style={styles.name} numberOfLines={1}>{habit.name}</Text>
           <Text style={styles.repeatLabel}>{REPEAT_LABELS[habit.repeatRule] || 'Every day'}</Text>
         </View>
+        <TouchableOpacity
+          style={styles.moreHeaderBtn}
+          onPress={() => openHabitOverflowMenu(habit, onOpenDetail, onDuplicate, onTogglePause, onDelete)}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityLabel="Habit menu"
+        >
+          <Image source={ICON_MORE} style={styles.moreHeaderIcon} resizeMode="contain" />
+        </TouchableOpacity>
         <View style={[styles.iconCircle, { backgroundColor: habit.iconBg || '#E8F4FD' }]}>
           {(() => {
             const IconComp = (habit.iconName && habitIconMap[habit.iconName]) || getIconForCategory(habit.category);
@@ -68,67 +133,49 @@ export default function HabitManageCard({
 
       <HabitWeekStrip completionHistory={habit.completionHistory || []} />
 
-      <View style={styles.bottomRow}>
-        <View style={styles.statGroup}>
-          <View style={styles.statItem}>
-            <Link2 size={13} color={Colors.success} />
-            <Text style={styles.statText}>{habit.streak}</Text>
+      <View style={styles.actionRail}>
+        <TouchableOpacity
+          style={styles.railBtn}
+          onPress={() => onOpenDetail?.(habit, 'Calendar')}
+          activeOpacity={0.7}
+        >
+          <View style={styles.railIconWrap}>
+            <CalendarDays size={18} color={Colors.textPrimary} />
           </View>
-          <View style={styles.statItem}>
-            <CircleCheckBig size={13} color={Colors.success} />
-            <Text style={styles.statText}>{completionRate}%</Text>
+          <Text style={styles.railLabel}>Calendar</Text>
+        </TouchableOpacity>
+        <View style={styles.railDivider} />
+        <TouchableOpacity
+          style={styles.railBtn}
+          onPress={() => onOpenDetail?.(habit, 'Statistics')}
+          activeOpacity={0.7}
+        >
+          <View style={styles.railIconWrap}>
+            <BarChartIcon size={18} color={Colors.textPrimary} />
           </View>
-        </View>
-
-        <View style={styles.actionGroup}>
-          <TouchableOpacity
-            style={styles.actionBtn}
-            onPress={() => onOpenDetail?.(habit, 'calendar')}
-            activeOpacity={0.7}
-          >
-            <CalendarDays size={16} color={Colors.textTertiary} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.actionBtn}
-            onPress={() => onOpenDetail?.(habit, 'statistics')}
-            activeOpacity={0.7}
-          >
-            <BarChart2 size={16} color={Colors.textTertiary} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.actionBtn}
-            onPress={() => setShowMenu(!showMenu)}
-            activeOpacity={0.7}
-          >
-            <Image source={ICON_MORE} style={styles.moreIcon} resizeMode="contain" />
-          </TouchableOpacity>
-        </View>
+          <Text style={styles.railLabel}>Statistics</Text>
+        </TouchableOpacity>
+        <View style={styles.railDivider} />
+        <TouchableOpacity
+          style={styles.railBtn}
+          onPress={() => onOpenDetail?.(habit, 'Edit')}
+          activeOpacity={0.7}
+          accessibilityLabel="Edit habit"
+        >
+          <View style={styles.railIconWrap}>
+            <Pencil size={18} color={Colors.textPrimary} />
+          </View>
+          <Text style={styles.railLabel}>Edit</Text>
+        </TouchableOpacity>
       </View>
 
-      {showMenu && (
-        <View style={styles.menuDropdown}>
-          <TouchableOpacity style={styles.menuItem} onPress={() => { setShowMenu(false); onEdit?.(habit); }}>
-            <Pencil size={16} color={Colors.textSecondary} />
-            <Text style={styles.menuItemText}>Edit</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.menuItem} onPress={() => { setShowMenu(false); onDuplicate?.(habit); }}>
-            <Copy size={16} color={Colors.textSecondary} />
-            <Text style={styles.menuItemText}>Duplicate</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.menuItem} onPress={() => { setShowMenu(false); onTogglePause?.(habit); }}>
-            {habit.isPaused ? <Play size={16} color={Colors.textSecondary} /> : <Pause size={16} color={Colors.textSecondary} />}
-            <Text style={styles.menuItemText}>{habit.isPaused ? 'Resume' : 'Pause'}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.menuItem} onPress={() => { setShowMenu(false); onArchive?.(habit); }}>
-            <Archive size={16} color={Colors.textSecondary} />
-            <Text style={styles.menuItemText}>Archive</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.menuItem} onPress={() => { setShowMenu(false); onDelete?.(habit); }}>
-            <Trash2 size={16} color={Colors.error} />
-            <Text style={[styles.menuItemText, { color: Colors.error }]}>Delete</Text>
-          </TouchableOpacity>
+      <View style={styles.bottomMeta}>
+        <View style={styles.statGroup}>
+          <Text style={styles.statText}>Streak {habit.streak ?? 0}</Text>
+          <Text style={styles.statDot}>·</Text>
+          <Text style={styles.statText}>{completionRate}% 30d</Text>
         </View>
-      )}
+      </View>
     </View>
   );
 }
@@ -144,6 +191,8 @@ const createStyles = (Colors) => StyleSheet.create({
     shadowOpacity: 0.06,
     shadowRadius: 8,
     elevation: 3,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
   },
   topRow: {
     flexDirection: 'row',
@@ -165,6 +214,17 @@ const createStyles = (Colors) => StyleSheet.create({
     fontFamily: 'PlusJakartaSans-Medium',
     color: Colors.success,
   },
+  moreHeaderBtn: {
+    padding: 8,
+    marginRight: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  moreHeaderIcon: {
+    width: 22,
+    height: 22,
+    tintColor: Colors.textSecondary,
+  },
   iconCircle: {
     width: 46,
     height: 46,
@@ -172,68 +232,64 @@ const createStyles = (Colors) => StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  emoji: {
-    fontSize: 22,
+  actionRail: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    marginTop: 16,
+    backgroundColor: Colors.innerCard,
+    borderRadius: Layout.borderRadius.xl,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: Colors.innerBorder,
   },
-  bottomRow: {
+  railBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    gap: 6,
+    borderRadius: Layout.borderRadius.md,
+  },
+  railIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: Colors.cardBackground,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.innerBorder,
+  },
+  railDivider: {
+    width: StyleSheet.hairlineWidth,
+    backgroundColor: Colors.innerBorder,
+    marginVertical: 10,
+  },
+  railLabel: {
+    fontSize: 11,
+    fontFamily: 'PlusJakartaSans-SemiBold',
+    color: Colors.textSecondary,
+  },
+  bottomMeta: {
+    marginTop: 12,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 12,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: Colors.divider,
+    justifyContent: 'flex-start',
+    flexWrap: 'wrap',
+    gap: 6,
   },
   statGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
-  },
-  statItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
+    gap: 6,
   },
   statText: {
-    fontSize: 13,
+    fontSize: 12,
     fontFamily: 'PlusJakartaSans-SemiBold',
     color: Colors.success,
   },
-  actionGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  actionBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: Colors.background,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  moreIcon: {
-    width: 16,
-    height: 16,
-    tintColor: Colors.textTertiary,
-  },
-  menuDropdown: {
-    marginTop: 10,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: Colors.divider,
-    gap: 2,
-  },
-  menuItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 4,
-  },
-  menuItemText: {
-    fontSize: 14,
-    color: Colors.textSecondary,
-    fontFamily: 'PlusJakartaSans-Medium',
+  statDot: {
+    fontSize: 12,
+    color: Colors.textTertiary,
   },
 });

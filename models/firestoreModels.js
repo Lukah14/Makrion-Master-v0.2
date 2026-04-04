@@ -211,6 +211,9 @@
  * @property {number|null}  progressValue
  * @property {string|null}  progressUnit
  * @property {number|null}  streakSnapshot
+ * @property {number|null}  completionPercent   - checklist 0–100
+ * @property {{ id: string, completed: boolean }[]|null} checklistState
+ * @property {'missed'|'not_started'|'in_progress'|'completed'|null} trackingStatus
  * @property {import('firebase/firestore').Timestamp} createdAt
  * @property {import('firebase/firestore').Timestamp} updatedAt
  */
@@ -251,25 +254,47 @@
  * @property {import('firebase/firestore').Timestamp} updatedAt
  */
 
+// ─── Exercise definition (catalog) ───────────────────────────────────────────
+
+/**
+ * exercises/{exerciseId} (global library)
+ * @typedef {Object} ExerciseDefinition
+ * @property {string}  name
+ * @property {'Cardiovascular'|'Strength'} typeOfExercise
+ * @property {'Light'|'Moderate'|'Strenuous'} intensity
+ * @property {number}  met
+ * @property {number}  kcalsPerHour80kg
+ * @property {boolean} isActive
+ * @property {import('firebase/firestore').Timestamp} createdAt
+ * @property {import('firebase/firestore').Timestamp} updatedAt
+ * @property {string} [type] legacy: "time"|"distance"|"reps"
+ * @property {string|null} [category]
+ * @property {string|null} [shortInstructions]
+ */
+
 // ─── Activity ─────────────────────────────────────────────────────────────────
 
 /**
- * profiles/{uid}/activities/{activityId}
+ * users/{uid}/activities/{activityId}
  * @typedef {Object} Activity
  * @property {string}  id
- * @property {string}  uid
- * @property {string}  dateKey
- * @property {string}  type        - "cardio" | "strength" | "flexibility" | "sport" | "other"
- * @property {string}  name
+ * @property {string}  userId
+ * @property {string}  date           - YYYY-MM-DD
+ * @property {string}  type           - "time" | "distance" | "reps" (legacy: strength, cardio, mixed)
+ * @property {string}  source         - "manual" | "firestore"
+ * @property {string|null} exerciseId
+ * @property {'Cardiovascular'|'Strength'|null} [typeOfExercise]
+ * @property {'Light'|'Moderate'|'Strenuous'|null} [intensity]
+ * @property {number|null} [met]
+ * @property {number|null} [kcalsPerHour80kg]
+ * @property {number|null} [caloriesBurned]
  * @property {string|null} category
- * @property {number}  durationMinutes
- * @property {number}  caloriesBurned
- * @property {number|null} steps
+ * @property {string|null} shortInstructions
+ * @property {string}  name
+ * @property {number|null} durationMinutes
  * @property {number|null} distanceKm
- * @property {string}  status      - "done" | "planned" | "skipped"
- * @property {import('firebase/firestore').Timestamp|null} startedAt
- * @property {import('firebase/firestore').Timestamp|null} completedAt
- * @property {string|null} note
+ * @property {number|null} repsPerSet
+ * @property {number|null} sets
  * @property {import('firebase/firestore').Timestamp} createdAt
  * @property {import('firebase/firestore').Timestamp} updatedAt
  */
@@ -304,6 +329,7 @@
  * @property {string|null}  photoUrl
  * @property {string|null}  achievementTag
  * @property {string|null}  moodTag
+ * @property {number|null}  moodRating   - 1–10, optional
  * @property {import('firebase/firestore').Timestamp|null} happenedAt
  * @property {import('firebase/firestore').Timestamp} createdAt
  * @property {import('firebase/firestore').Timestamp} updatedAt

@@ -1,5 +1,5 @@
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
-import { Plus, Grid2x2 } from 'lucide-react-native';
+import { Grid2x2 } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import { habitCategories } from '@/data/mockData';
 import { habitIconMap } from './habitIconMap';
@@ -56,16 +56,6 @@ export default function WizardStepCategory({ selectedCategory, onSelectCategory 
         ))}
       </View>
 
-      <TouchableOpacity style={styles.createCard} activeOpacity={0.7}>
-        <View>
-          <Text style={styles.createTitle}>Create category</Text>
-          <Text style={styles.createSubtitle}>5 available</Text>
-        </View>
-        <View style={styles.createIcon}>
-          <Plus size={20} color={Colors.textSecondary} />
-        </View>
-      </TouchableOpacity>
-
       <View style={{ height: 40 }} />
     </ScrollView>
   );
@@ -120,35 +110,6 @@ const createStyles = (Colors) => StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  createCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: Colors.innerCard,
-    borderRadius: 14,
-    padding: 14,
-    marginTop: 10,
-    alignSelf: 'flex-start',
-    width: '48%',
-  },
-  createTitle: {
-    fontSize: 14,
-    fontFamily: 'PlusJakartaSans-SemiBold',
-    color: Colors.textPrimary,
-  },
-  createSubtitle: {
-    fontSize: 12,
-    color: Colors.textTertiary,
-    marginTop: 2,
-  },
-  createIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: Colors.innerBorder,
     justifyContent: 'center',
     alignItems: 'center',
   },

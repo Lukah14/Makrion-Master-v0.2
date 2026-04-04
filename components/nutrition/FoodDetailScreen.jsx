@@ -19,6 +19,7 @@ import {
   selectGramServing,
   formatServingLabel,
   getServingDropdownOptions,
+  defaultQuantityForServing,
 } from '@/lib/servingUtils';
 
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
@@ -280,7 +281,7 @@ export default function FoodDetailScreen({ food: initialFood, onBack, onAddToLog
   const [quantity, setQuantity] = useState(() => {
     const best = initialFood.defaultServing || (initialFood.servings ? selectBestServing(initialFood.servings) : null);
     if (!best) return 100;
-    return best.isGramServing ? 100 : 1;
+    return defaultQuantityForServing(best);
   });
   const [loading, setLoading] = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
@@ -367,7 +368,7 @@ export default function FoodDetailScreen({ food: initialFood, onBack, onAddToLog
           const best = selectBestServing(withGram);
           if (best) {
             setSelectedServing(best);
-            setQuantity(best.isGramServing ? 100 : 1);
+            setQuantity(defaultQuantityForServing(best));
           }
         }
       }
@@ -377,7 +378,7 @@ export default function FoodDetailScreen({ food: initialFood, onBack, onAddToLog
 
   const handleServingSelect = (serving) => {
     setSelectedServing(serving);
-    setQuantity(serving.isGramServing ? 100 : 1);
+    setQuantity(defaultQuantityForServing(serving));
   };
 
   const nutrition = computeNutrition(selectedServing, quantity);

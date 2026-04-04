@@ -1,7 +1,7 @@
-import { useState } from 'react';
-import { ScrollView, View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import { useState, useCallback, useMemo } from 'react';
+import { ScrollView, View, Text, TouchableOpacity, StyleSheet, Platform, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Flame, Clock, Footprints, Plus, Dumbbell } from 'lucide-react-native';
+import { Flame, Clock, Footprints, Plus } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import { useNutritionDate } from '@/context/NutritionDateContext';
 import { Layout } from '@/constants/layout';
@@ -10,14 +10,11 @@ import SelectedDateBar from '@/components/calendar/SelectedDateBar';
 import { todayDateKey } from '@/lib/dateKey';
 import ProgressRing from '@/components/common/ProgressRing';
 import StrikeBadge from '@/components/common/StrikeBadge';
-import EmptyState from '@/components/common/EmptyState';
 import TodayPage from '@/components/activity/TodayPage';
-import ExercisePage from '@/components/activity/ExercisePage';
-import PlanPage from '@/components/activity/PlanPage';
 import { isActivityStrikeComplete, countStreak } from '@/lib/strikeHelpers';
 import { useActivityLog } from '@/hooks/useActivityLog';
+import AddEditActivityModal from '@/components/activity/AddEditActivityModal';
 
-const TABS = ['Today', 'Exercise', 'Plan'];
 function ActivitySummaryBar({ data }) {
   const { colors: Colors } = useTheme();
   const s = createS(Colors);
@@ -68,33 +65,47 @@ function ActivitySummaryBar({ data }) {
   );
 }
 
-function SubNav({ active, onChange }) {
-  const { colors: Colors } = useTheme();
-  const s = createS(Colors);
-  return (
-    <View style={s.subNav}>
-      {TABS.map((tab) => (
-        <TouchableOpacity
-          key={tab}
-          style={[s.subNavTab, active === tab && s.subNavTabActive]}
-          onPress={() => onChange(tab)}
-          activeOpacity={0.7}
-        >
-          <Text style={[s.subNavText, active === tab && s.subNavTextActive]}>{tab}</Text>
-        </TouchableOpacity>
-      ))}
-    </View>
-  );
-}
-
 export default function ActivityScreen() {
   const { colors: Colors } = useTheme();
   const s = createS(Colors);
-  const [activeTab, setActiveTab] = useState('Today');
   const [calendarOpen, setCalendarOpen] = useState(false);
+  const [activityModalOpen, setActivityModalOpen] = useState(false);
+  const [editingEntryId, setEditingEntryId] = useState(null);
   const { dateKey } = useNutritionDate();
   const activityLog = useActivityLog(dateKey);
   const today = todayDateKey();
+
+  const editingEntry = useMemo(
+    () => (editingEntryId ? activityLog.entries.find((e) => e.id === editingEntryId) : null),
+    [editingEntryId, activityLog.entries],
+  );
+
+  const openAddActivity = useCallback(() => {
+    setEditingEntryId(null);
+    setActivityModalOpen(true);
+  }, []);
+
+  const closeActivityModal = useCallback(() => {
+    setActivityModalOpen(false);
+    setEditingEntryId(null);
+  }, []);
+
+  const handleSaveActivity = useCallback(
+    async (values) => {
+      try {
+        if (editingEntryId) {
+          await activityLog.editEntry(editingEntryId, values);
+        } else {
+          await activityLog.addEntry(values);
+        }
+        setActivityModalOpen(false);
+        setEditingEntryId(null);
+      } catch (e) {
+        Alert.alert('Could not save', e?.message || 'Try again.');
+      }
+    },
+    [activityLog, editingEntryId],
+  );
 
   const activityData = {
     caloriesBurned: activityLog.totalCaloriesBurned || 0,
@@ -133,30 +144,47 @@ export default function ActivityScreen() {
         />
 
         <ActivitySummaryBar data={activityData} />
-        <SubNav active={activeTab} onChange={setActiveTab} />
 
-        {activeTab === 'Today' && (
-          activityLog.entries.length === 0 && !activityLog.loading ? (
-            <EmptyState
-              icon={Dumbbell}
-              title="No activity logged today"
-              message="Start tracking your workouts and daily movement"
-            />
-          ) : (
-            <TodayPage />
-          )
-        )}
-        {activeTab === 'Exercise' && <ExercisePage />}
-        {activeTab === 'Plan' && <PlanPage />}
+        {activityLog.error ? (
+          <View style={s.errorBanner}>
+            <Text style={s.errorBannerText}>{activityLog.error}</Text>
+            <TouchableOpacity onPress={() => activityLog.reload()} style={s.errorRetry} activeOpacity={0.7}>
+              <Text style={s.errorRetryText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        <TodayPage
+          entries={activityLog.entries}
+          loading={activityLog.loading}
+          onAdd={openAddActivity}
+          onEdit={(e) => {
+            setEditingEntryId(e.id);
+            setActivityModalOpen(true);
+          }}
+          onDelete={async (id) => {
+            try {
+              await activityLog.removeEntry(id);
+            } catch (e) {
+              Alert.alert('Could not delete', e?.message || 'Try again.');
+            }
+          }}
+        />
 
         <View style={{ height: 40 }} />
       </ScrollView>
 
-      {activeTab === 'Today' && (
-        <TouchableOpacity style={s.fab} activeOpacity={0.8}>
-          <Plus size={24} color={Colors.onPrimary} />
-        </TouchableOpacity>
-      )}
+      <TouchableOpacity style={s.fab} activeOpacity={0.8} onPress={openAddActivity}>
+        <Plus size={24} color={Colors.onPrimary} />
+      </TouchableOpacity>
+
+      <AddEditActivityModal
+        visible={activityModalOpen}
+        onClose={closeActivityModal}
+        dateKey={dateKey}
+        initialEntry={editingEntry}
+        onSave={handleSaveActivity}
+      />
 
       <CalendarModal visible={calendarOpen} onClose={() => setCalendarOpen(false)} />
     </SafeAreaView>
@@ -196,23 +224,35 @@ const createS = (Colors) => StyleSheet.create({
   summaryBarDivider: { width: 1, height: 48, backgroundColor: Colors.divider },
   summaryBarValue: { fontSize: 17, fontFamily: 'PlusJakartaSans-Bold', color: Colors.textPrimary },
   summaryBarLabel: { fontSize: 11, color: Colors.textTertiary },
-  subNav: {
+  errorBanner: {
     flexDirection: 'row',
-    backgroundColor: Colors.cardBackground,
-    borderRadius: Layout.borderRadius.lg,
-    padding: 4,
-    marginBottom: 16,
-    ...Layout.cardShadow,
-  },
-  subNavTab: {
-    flex: 1,
-    paddingVertical: 10,
     alignItems: 'center',
-    borderRadius: Layout.borderRadius.md,
+    justifyContent: 'space-between',
+    gap: 12,
+    padding: 12,
+    borderRadius: Layout.borderRadius.lg,
+    backgroundColor: Colors.error + '18',
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: Colors.error + '44',
   },
-  subNavTabActive: { backgroundColor: Colors.textPrimary },
-  subNavText: { fontSize: 14, fontFamily: 'PlusJakartaSans-Medium', color: Colors.textTertiary },
-  subNavTextActive: { color: Colors.onPrimary, fontFamily: 'PlusJakartaSans-SemiBold' },
+  errorBannerText: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: 'PlusJakartaSans-Medium',
+    color: Colors.textPrimary,
+  },
+  errorRetry: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: Layout.borderRadius.md,
+    backgroundColor: Colors.textPrimary,
+  },
+  errorRetryText: {
+    fontSize: 13,
+    fontFamily: 'PlusJakartaSans-SemiBold',
+    color: Colors.onPrimary,
+  },
   fab: {
     position: 'absolute',
     bottom: Platform.OS === 'ios' ? 100 : 80,

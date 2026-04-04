@@ -39,18 +39,16 @@ export function useMemorableMoments(dateKey) {
   }, [user, dateKey, load]);
 
   const edit = useCallback(async (momentId, changes) => {
-    if (!user) return;
+    if (!user) throw new Error('Not authenticated');
     await updateMemorableMoment(user.uid, momentId, changes);
-    setMoments((prev) =>
-      prev.map((m) => (m.id === momentId ? { ...m, ...changes } : m)),
-    );
-  }, [user]);
+    await load();
+  }, [user, load]);
 
   const remove = useCallback(async (momentId) => {
-    if (!user) return;
+    if (!user) throw new Error('Not authenticated');
     await deleteMemorableMoment(user.uid, momentId);
-    setMoments((prev) => prev.filter((m) => m.id !== momentId));
-  }, [user]);
+    await load();
+  }, [user, load]);
 
   return { moments, loading, error, add, edit, remove, reload: load };
 }

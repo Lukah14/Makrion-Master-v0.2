@@ -1,7 +1,7 @@
 /**
  * Daily-log service — profiles/{uid}/daily_logs/{dateKey}
- * Aggregation shell: totals computed exclusively from food_entries, activities,
- * and habit_completions.
+ * Aggregation shell: totals from profiles/.../food_entries, users/.../activities
+ * (Activity tab writes users/{uid}/activities — same uid as profiles), and habit_completions.
  */
 
 import {
@@ -101,15 +101,15 @@ export async function recalculateDailyLog(uid, dateKey) {
 
   const actSnap = await getDocs(
     query(
-      collection(db, 'profiles', uid, 'activities'),
-      where('dateKey', '==', dateKey),
+      collection(db, 'users', uid, 'activities'),
+      where('date', '==', dateKey),
     ),
   );
   let caloriesBurned = 0;
   for (const d of actSnap.docs) {
     const a = d.data();
-    if (a.status && a.status !== 'done') continue;
-    caloriesBurned += a.caloriesBurned || 0;
+    if (a.status != null && a.status !== 'done') continue;
+    caloriesBurned += Number(a.caloriesBurned) || 0;
   }
 
   let calorieGoal = 0;

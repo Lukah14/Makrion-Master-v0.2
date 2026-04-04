@@ -6,6 +6,7 @@ import {
 import { Plus, Pencil, Trash2, ArrowRightLeft } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import Card from '@/components/common/Card';
+import { num } from '@/lib/num';
 import EditEntrySheet from './EditEntrySheet';
 
 const MEAL_ORDER = ['breakfast', 'lunch', 'dinner', 'snack'];
@@ -47,6 +48,20 @@ export default function FoodLogSections({
   }
 
   const mealSubtotals = summary?.mealSubtotals || {};
+
+  const totalsFromEntries = (list) =>
+    list.reduce(
+      (a, e) => {
+        const snap = e.nutrientsSnapshot || {};
+        return {
+          kcal: a.kcal + num(snap.kcal),
+          protein: a.protein + num(snap.protein),
+          carbs: a.carbs + num(snap.carbs),
+          fat: a.fat + num(snap.fat),
+        };
+      },
+      { kcal: 0, protein: 0, carbs: 0, fat: 0 }
+    );
 
   const handleDelete = (entry) => {
     setMenuEntry(null);
@@ -96,7 +111,19 @@ export default function FoodLogSections({
       {MEAL_ORDER.map((mealKey) => {
         const items = mealGroups[mealKey];
         const subtotal = mealSubtotals[mealKey];
-        const kcal = subtotal?.kcal ?? 0;
+        const fromItems = totalsFromEntries(items);
+        const kcal = Math.round(
+          items.length > 0 ? fromItems.kcal : num(subtotal?.kcal)
+        );
+        const protein = Math.round(
+          (items.length > 0 ? fromItems.protein : num(subtotal?.protein)) * 10
+        ) / 10;
+        const carbs = Math.round(
+          (items.length > 0 ? fromItems.carbs : num(subtotal?.carbs)) * 10
+        ) / 10;
+        const fat = Math.round(
+          (items.length > 0 ? fromItems.fat : num(subtotal?.fat)) * 10
+        ) / 10;
 
         return (
           <Card key={mealKey} style={s.mealCard}>
@@ -109,11 +136,9 @@ export default function FoodLogSections({
                 <Text style={s.mealEmoji}>{MEAL_EMOJI[mealKey]}</Text>
                 <View>
                   <Text style={s.mealTitle}>{MEAL_LABELS[mealKey]}</Text>
-                  {items.length > 0 && (
-                    <Text style={s.mealSubtotal}>
-                      {Math.round(kcal)} kcal · P {Math.round(subtotal?.protein ?? 0)}g · C {Math.round(subtotal?.carbs ?? 0)}g · F {Math.round(subtotal?.fat ?? 0)}g
-                    </Text>
-                  )}
+                  <Text style={s.mealSubtotal}>
+                    {kcal} kcal · P {protein}g · C {carbs}g · F {fat}g
+                  </Text>
                 </View>
               </View>
               <View style={s.addMealBtn}>
@@ -136,16 +161,18 @@ export default function FoodLogSections({
                         {entry.nameSnapshot || 'Food'}
                       </Text>
                       <Text style={s.entryDetail}>
-                        {entry.grams ? `${entry.grams}g` : '—'}
+                        {entry.grams != null && entry.grams !== ''
+                          ? `${num(entry.grams)}g`
+                          : '—'}
                         {entry.brandSnapshot ? ` · ${entry.brandSnapshot}` : ''}
                       </Text>
                     </View>
                     <View style={s.entryRight}>
                       <Text style={s.entryCal}>
-                        {entry.nutrientsSnapshot?.kcal ?? 0} cal
+                        {Math.round(num(entry.nutrientsSnapshot?.kcal))} cal
                       </Text>
                       <Text style={s.entryMacros}>
-                        P {Math.round(entry.nutrientsSnapshot?.protein ?? 0)}g · C {Math.round(entry.nutrientsSnapshot?.carbs ?? 0)}g · F {Math.round(entry.nutrientsSnapshot?.fat ?? 0)}g
+                        P {Math.round(num(entry.nutrientsSnapshot?.protein) * 10) / 10}g · C {Math.round(num(entry.nutrientsSnapshot?.carbs) * 10) / 10}g · F {Math.round(num(entry.nutrientsSnapshot?.fat) * 10) / 10}g
                       </Text>
                     </View>
                   </TouchableOpacity>
@@ -181,7 +208,14 @@ export default function FoodLogSections({
               {menuEntry?.nameSnapshot || 'Food'}
             </Text>
             <Text style={s.menuSubtitle}>
-              {menuEntry?.grams ? `${menuEntry.grams}g` : ''} · {menuEntry?.nutrientsSnapshot?.kcal ?? 0} kcal
+              {[
+                menuEntry?.grams != null && menuEntry?.grams !== ''
+                  ? `${num(menuEntry.grams)}g`
+                  : null,
+                `${Math.round(num(menuEntry?.nutrientsSnapshot?.kcal))} kcal`,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
             </Text>
 
             <TouchableOpacity

@@ -1,48 +1,157 @@
+/**
+ * Habits + day completions for the Habits tab UI.
+ * Storage: profiles/{uid}/habits/{habitId}, profiles/{uid}/habit_completions/{habitId_dateKey}
+ * (matches firestore.rules + dailyLogService + habitCompletionService.)
+ */
+
 import {
   collection,
   doc,
   addDoc,
   getDoc,
   getDocs,
-  setDoc,
   updateDoc,
   deleteDoc,
   query,
-  where,
   orderBy,
   serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-
-// ─── Habits (users/{uid}/habits/{habitId}) ─────────────────────────────────────
+import { parseDateKey, toDateKey } from '@/lib/dateKey';
+import {
+  getHabitCompletionsByDate,
+  upsertHabitCompletion,
+  deleteHabitCompletionForDate,
+  listHabitCompletionsForHabit as fetchCompletionsForHabit,
+  listHabitCompletionsSince as fetchCompletionsSince,
+} from '@/services/habitCompletionService';
 
 function habitsRef(uid) {
-  return collection(db, 'users', uid, 'habits');
+  return collection(db, 'profiles', uid, 'habits');
 }
 
 function habitRef(uid, habitId) {
-  return doc(db, 'users', uid, 'habits', habitId);
+  return doc(db, 'profiles', uid, 'habits', habitId);
 }
 
+function stripUndefined(obj) {
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
+}
+
+/** Map wizard repeatRule + repeatDays → Firestore repeat (habitSchedule.js). */
+function mapWizardRepeatToFirestore(repeatRule, repeatDays) {
+  const days = Array.isArray(repeatDays) ? repeatDays : [];
+  switch (repeatRule) {
+    case 'specific_days_week':
+      return {
+        mode: 'weekly',
+        daysOfWeek: days.map((d) => (Number(d) === 7 ? 0 : Number(d))).filter((n) => n >= 0 && n <= 6),
+        daysOfMonth: null,
+        interval: null,
+      };
+    case 'specific_days_month':
+      return {
+        mode: 'monthly',
+        daysOfWeek: null,
+        daysOfMonth: days.length ? days.map(Number).filter((n) => n >= 1 && n <= 31) : null,
+        interval: null,
+      };
+    case 'specific_days_year':
+      return { mode: 'yearly', daysOfWeek: null, daysOfMonth: null, interval: null };
+    case 'some_days_period':
+      return {
+        mode: 'custom',
+        daysOfWeek: null,
+        daysOfMonth: null,
+        interval: days.length ? Math.max(1, Number(days[0]) || 2) : 2,
+      };
+    default:
+      return { mode: 'daily', daysOfWeek: null, daysOfMonth: null, interval: null };
+  }
+}
+
+function computeEndDateKey(startDateKey, endDateEnabled, endDateDays) {
+  if (!endDateEnabled || !endDateDays) return null;
+  const start = parseDateKey(startDateKey);
+  const d = new Date(start.getTime());
+  d.setDate(d.getDate() + (parseInt(String(endDateDays), 10) || 0));
+  return toDateKey(d);
+}
+
+/**
+ * @param {string} uid
+ * @param {Object} data  Wizard / UI payload
+ */
 export async function createHabit(uid, data) {
-  const payload = {
-    name: data.name,
+  const startDateKey =
+    typeof data.startDate === 'string' && data.startDate.length >= 10
+      ? data.startDate.slice(0, 10)
+      : toDateKey(new Date());
+
+  const repeat = mapWizardRepeatToFirestore(data.repeatRule || 'daily', data.repeatDays);
+  const endDateKey = computeEndDateKey(
+    startDateKey,
+    data.endDateEnabled,
+    data.endDateDays,
+  );
+
+  const target = Number(data.target ?? data.targetValue) || 1;
+  const current = Number(data.current) || 0;
+
+  const payload = stripUndefined({
+    uid,
+    name: data.name || '',
     description: data.description || '',
     category: data.category || 'health',
-    type: data.type || 'boolean',
-    icon: data.icon || 'check',
+    type: data.type || 'yesno',
+    icon: data.icon || data.iconName || 'check',
     color: data.color || '#2DA89E',
-    frequency: data.frequency || { type: 'daily', days: [] },
-    targetValue: data.targetValue || null,
+    emoji: data.emoji ?? null,
+    iconName: data.iconName ?? null,
+    iconBg: data.iconBg ?? null,
+    iconColor: data.iconColor ?? null,
+    target,
+    current,
+    targetValue: target,
     unit: data.unit || '',
-    reminderEnabled: data.reminderEnabled || false,
-    reminderTime: data.reminderTime || null,
-    priority: data.priority || 'medium',
-    active: true,
+    checklistItems: Array.isArray(data.checklistItems) ? data.checklistItems : null,
+    repeatRule: data.repeatRule || 'daily',
+    repeatDays: data.repeatDays || [],
+    reminderTime: data.reminderTime ?? null,
+    reminderCount: data.reminderCount ?? 0,
+    reminderEnabled: !!(data.reminderTime || data.reminderEnabled),
+    priority: data.priority === 'default' ? 'medium' : data.priority || 'medium',
+    paused: data.paused ?? false,
+    isPaused: data.isPaused ?? false,
     archived: false,
+    isArchived: false,
+    active: true,
+    completed: data.completed ?? false,
+    streak: data.streak ?? 0,
+    sortOrder: data.sortOrder ?? 0,
+    repeat,
+    schedule: {
+      startDateKey,
+      endDateKey,
+      reminderEnabled: !!(data.reminderTime || data.reminderEnabled),
+      reminderTime: data.reminderTime ?? null,
+      priority: data.priority === 'default' ? 'medium' : data.priority || 'medium',
+    },
+    evaluation: {
+      targetValue: target,
+      unit: data.unit || null,
+      checklistTargetCount: Array.isArray(data.checklistItems) ? data.checklistItems.length : null,
+      ratingMin: null,
+      ratingMax: null,
+    },
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-  };
+  });
+
   const ref = await addDoc(habitsRef(uid), payload);
   return ref.id;
 }
@@ -52,69 +161,140 @@ export async function getHabit(uid, habitId) {
   return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
 
-export async function listHabits(uid, activeOnly = true) {
-  const constraints = [orderBy('createdAt', 'desc')];
-  if (activeOnly) constraints.unshift(where('archived', '==', false));
-  const q = query(habitsRef(uid), ...constraints);
+/**
+ * List habits (templates). Archived filtered client-side to avoid composite index issues.
+ */
+export async function listHabits(uid) {
+  const q = query(habitsRef(uid), orderBy('createdAt', 'desc'));
   const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((h) => !(h.archived === true || h.isArchived === true));
 }
 
 export async function updateHabit(uid, habitId, changes) {
-  await updateDoc(habitRef(uid, habitId), {
-    ...changes,
+  const { id: _id, createdAt: _c, ...raw } = changes;
+  const patch = stripUndefined({
+    ...raw,
     updatedAt: serverTimestamp(),
   });
-}
 
-export async function archiveHabit(uid, habitId) {
-  await updateDoc(habitRef(uid, habitId), {
-    archived: true,
-    updatedAt: serverTimestamp(),
-  });
+  if (raw.repeatRule != null || raw.repeatDays != null) {
+    patch.repeat = mapWizardRepeatToFirestore(
+      raw.repeatRule || 'daily',
+      Array.isArray(raw.repeatDays) ? raw.repeatDays : [],
+    );
+  }
+  if (typeof raw.startDate === 'string' && raw.startDate.length >= 10) {
+    const sk = raw.startDate.slice(0, 10);
+    patch.schedule = {
+      startDateKey: sk,
+      endDateKey: computeEndDateKey(sk, raw.endDateEnabled, raw.endDateDays),
+      reminderEnabled: !!(raw.reminderTime || raw.reminderEnabled),
+      reminderTime: raw.reminderTime ?? null,
+      priority: raw.priority === 'default' ? 'medium' : raw.priority || 'medium',
+    };
+  }
+  if (raw.target != null || raw.targetValue != null) {
+    const t = Number(raw.target ?? raw.targetValue);
+    if (!Number.isNaN(t) && t > 0) {
+      patch.target = t;
+      patch.targetValue = t;
+      patch.evaluation = {
+        targetValue: t,
+        unit: raw.unit ?? null,
+        checklistTargetCount: Array.isArray(raw.checklistItems) ? raw.checklistItems.length : null,
+        ratingMin: null,
+        ratingMax: null,
+      };
+    }
+  }
+
+  if (raw.archived === true || raw.isArchived === true) {
+    patch.archived = true;
+    patch.isArchived = true;
+  }
+  if (raw.archived === false || raw.isArchived === false) {
+    patch.archived = false;
+    patch.isArchived = false;
+  }
+  if (raw.paused !== undefined || raw.isPaused !== undefined) {
+    patch.paused = raw.isPaused ?? raw.paused;
+    patch.isPaused = raw.paused ?? raw.isPaused;
+  }
+  await updateDoc(habitRef(uid, habitId), patch);
 }
 
 export async function deleteHabit(uid, habitId) {
   await deleteDoc(habitRef(uid, habitId));
 }
 
-// ─── Habit completions (users/{uid}/habitCompletions/{date}/entries/{id}) ───────
+// ─── Completions (profiles/.../habit_completions) ─
 
-function completionsRef(uid, date) {
-  return collection(db, 'users', uid, 'habitCompletions', date, 'entries');
-}
-
-function completionRef(uid, date, completionId) {
-  return doc(db, 'users', uid, 'habitCompletions', date, 'entries', completionId);
+/**
+ * @returns {Promise<Array<{ id: string, habitId: string, completed: boolean, ... }>>}
+ */
+export async function listHabitCompletions(uid, dateKey) {
+  const rows = await getHabitCompletionsByDate(uid, dateKey);
+  return rows.map((c) => ({
+    ...c,
+    habitId: c.habitId,
+    completed: c.isCompleted !== false,
+    value: c.progressValue ?? null,
+    note: c.note ?? '',
+  }));
 }
 
 export async function logHabitCompletion(uid, date, habitId, data = {}) {
-  const id = habitId;
-  const ref = doc(db, 'users', uid, 'habitCompletions', date, 'entries', id);
-  await setDoc(ref, {
-    habitId,
-    completed: data.completed ?? true,
-    value: data.value ?? null,
-    note: data.note || '',
-    completedAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
+  await upsertHabitCompletion(uid, habitId, date, {
+    isCompleted: data.completed !== false,
+    progressValue: data.value !== undefined ? data.value : null,
+    progressUnit: data.progressUnit !== undefined ? data.progressUnit : null,
   });
-  return id;
+  return habitId;
 }
 
 export async function getHabitCompletion(uid, date, habitId) {
-  const snap = await getDoc(
-    doc(db, 'users', uid, 'habitCompletions', date, 'entries', habitId)
-  );
-  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
-}
-
-export async function listHabitCompletions(uid, date) {
-  const q = query(completionsRef(uid, date));
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const list = await listHabitCompletions(uid, date);
+  return list.find((c) => c.habitId === habitId) || null;
 }
 
 export async function removeHabitCompletion(uid, date, habitId) {
-  await deleteDoc(doc(db, 'users', uid, 'habitCompletions', date, 'entries', habitId));
+  await deleteHabitCompletionForDate(uid, habitId, date);
+}
+
+/**
+ * All completion docs for one habit, sorted by dateKey.
+ * @param {string} uid
+ * @param {string} habitId
+ */
+/**
+ * All completion docs from minDateKey onward (for manage cards / week strips).
+ * @param {string} uid
+ * @param {string} minDateKey
+ */
+export async function listHabitCompletionsSince(uid, minDateKey) {
+  return fetchCompletionsSince(uid, minDateKey);
+}
+
+export async function listHabitCompletionsForHabit(uid, habitId) {
+  const rows = await fetchCompletionsForHabit(uid, habitId);
+  return rows.map((c) => ({
+    ...c,
+    habitId: c.habitId,
+    completed: c.isCompleted !== false,
+    value: c.progressValue ?? null,
+    note: c.note ?? '',
+  }));
+}
+
+/**
+ * Merge-update one day row for non-yes/no tracking (and yes/no when not using toggle delete).
+ * @param {string} uid
+ * @param {string} habitId
+ * @param {string} dateKey
+ * @param {Object} data
+ */
+export async function saveHabitDayCompletion(uid, habitId, dateKey, data) {
+  await upsertHabitCompletion(uid, habitId, dateKey, data);
 }

@@ -17,21 +17,22 @@ import { useFoodLog } from '@/hooks/useFoodLog';
 import { useUser } from '@/hooks/useUser';
 import { isNutritionStrikeComplete, countStreak } from '@/lib/strikeHelpers';
 import { todayDateKey } from '@/lib/dateKey';
+import { num } from '@/lib/num';
 
 function NutritionHeader({ logSummary, goals }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
-  const calTarget = goals?.calories || 0;
-  const protTarget = goals?.protein || 0;
-  const carbTarget = goals?.carbs || 0;
-  const fatTarget = goals?.fat || 0;
+  const calTarget = num(goals?.calories);
+  const protTarget = num(goals?.protein);
+  const carbTarget = num(goals?.carbs);
+  const fatTarget = num(goals?.fat);
 
-  const consumed = logSummary?.totalsLogged?.kcal ?? 0;
-  const protConsumed = Math.round(logSummary?.totalsLogged?.protein ?? 0);
-  const carbConsumed = Math.round(logSummary?.totalsLogged?.carbs ?? 0);
-  const fatConsumed = Math.round(logSummary?.totalsLogged?.fat ?? 0);
+  const consumed = Math.round(num(logSummary?.totalsLogged?.kcal));
+  const protConsumed = Math.round(num(logSummary?.totalsLogged?.protein) * 10) / 10;
+  const carbConsumed = Math.round(num(logSummary?.totalsLogged?.carbs) * 10) / 10;
+  const fatConsumed = Math.round(num(logSummary?.totalsLogged?.fat) * 10) / 10;
 
-  const progress = calTarget > 0 ? consumed / calTarget : 0;
+  const progress = calTarget > 0 ? Math.min(consumed / calTarget, 1) : 0;
 
   return (
     <Card style={styles.headerCard}>
@@ -107,8 +108,8 @@ export default function NutritionScreen() {
   const isFullScreen = isSearch || isRecipes;
 
   const goals = userDoc?.goals || {};
-  const consumed = foodLog.summary?.totalsLogged?.kcal ?? 0;
-  const calTarget = goals.calories || 0;
+  const consumed = num(foodLog.summary?.totalsLogged?.kcal);
+  const calTarget = num(goals.calories);
   const todayComplete = calTarget > 0 && isNutritionStrikeComplete({ consumed, target: calTarget });
   const strikeCount = calTarget > 0 ? countStreak([todayComplete]) : 0;
 
