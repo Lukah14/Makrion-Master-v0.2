@@ -1,20 +1,26 @@
 import { useMemo, useState, useCallback } from 'react';
 import { useRouter } from 'expo-router';
-import { ScrollView, View, Text, Image, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import {
+  ScrollView, View, Text, Image, TouchableOpacity, StyleSheet, Platform,
+  Modal, Alert,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Plus } from 'lucide-react-native';
+import { Plus, X } from 'lucide-react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '@/context/ThemeContext';
 import { useNutritionDate } from '@/context/NutritionDateContext';
 import { Layout } from '@/constants/layout';
 import { useAuth } from '@/context/AuthContext';
 import { useUser } from '@/hooks/useUser';
 import { useFoodLog } from '@/hooks/useFoodLog';
+import { isManualFoodLogEntry } from '@/services/foodLogService';
 import { useHabits } from '@/hooks/useHabits';
 import { useWater } from '@/hooks/useWater';
 import { useActivityLog } from '@/hooks/useActivityLog';
+import { useSteps } from '@/hooks/useSteps';
 import { useProgress } from '@/hooks/useProgress';
-import DailyStreak from '@/components/dashboard/DailyStreak';
-import { streakBadges } from '@/data/mockData';
+import { useDomainStreaks } from '@/hooks/useDomainStreaks';
+import StrikesRow from '@/components/dashboard/StrikesRow';
 import CalendarModal from '@/components/calendar/CalendarModal';
 import CalorieRing from '@/components/dashboard/CalorieRing';
 import MacroCards from '@/components/dashboard/MacroCards';
@@ -24,9 +30,17 @@ import HabitsSummary from '@/components/dashboard/HabitsSummary';
 import WaterTracker from '@/components/dashboard/WaterTracker';
 import ProgressSnapshot from '@/components/dashboard/ProgressSnapshot';
 import RecentlyLogged from '@/components/dashboard/RecentlyLogged';
+import FoodSearchView from '@/components/nutrition/FoodSearchView';
+import EditEntrySheet from '@/components/nutrition/EditEntrySheet';
+import EditManualEntrySheet from '@/components/nutrition/EditManualEntrySheet';
+import { isHabitActiveOnDate } from '@/lib/habitSchedule';
+import { parseDateKey } from '@/lib/dateKey';
 
 const ICON_SETTINGS = require('@/src/Icons/Settings.png');
 const ICON_CALENDAR = require('@/src/Icons/Calendar.png');
+
+const MEAL_ORDER = ['breakfast', 'lunch', 'dinner', 'snack'];
+const MEAL_EMOJI = { breakfast: '🌅', lunch: '☀️', dinner: '🌙', snack: '🍿' };
 
 function getGreeting() {
   const h = new Date().getHours();
@@ -35,36 +49,64 @@ function getGreeting() {
   return 'Good evening';
 }
 
-const MEAL_ORDER = ['breakfast', 'lunch', 'dinner', 'snack'];
-const MEAL_EMOJI = { breakfast: '🌅', lunch: '☀️', dinner: '🌙', snack: '🍿' };
+function formatDateLabel(dateKey) {
+  try {
+    const d = parseDateKey(dateKey);
+    return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  } catch {
+    return dateKey;
+  }
+}
 
 export default function HomeScreen() {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
   const router = useRouter();
   const [calendarOpen, setCalendarOpen] = useState(false);
-  const { dateKey, bumpCalendarRefresh } = useNutritionDate();
+  const { dateKey, bumpCalendarRefresh, calendarRefreshKey } = useNutritionDate();
 
   const { user } = useAuth();
   const { userData: userDoc } = useUser();
   const foodLog = useFoodLog(dateKey);
-  const { habits, completions } = useHabits(dateKey);
-  const { waterData, loading: waterLoading, addGlass, removeGlass } = useWater(dateKey);
+  const {
+    habits: allHabitsUi,
+    loading: habitsLoading,
+    error: habitsError,
+    toggleCompletion,
+    reload: reloadHabits,
+  } = useHabits(dateKey);
+
+  const {
+    waterData,
+    loading: waterLoading,
+    addGlass,
+    removeGlass,
+    updateGoalMl,
+  } = useWater(dateKey);
+
+  const domainStreaks = useDomainStreaks(calendarRefreshKey);
+
+  useFocusEffect(
+    useCallback(() => {
+      domainStreaks.reload();
+      reloadHabits();
+    }, [domainStreaks.reload, reloadHabits]),
+  );
 
   const syncWaterGlasses = useCallback(
     async (targetCount) => {
       let g = waterData.glasses;
       while (targetCount < g) {
         await removeGlass(250);
-        g--;
+        g -= 1;
       }
       while (targetCount > g) {
         await addGlass(250);
-        g++;
+        g += 1;
       }
       bumpCalendarRefresh();
     },
-    [waterData.glasses, addGlass, removeGlass, bumpCalendarRefresh]
+    [waterData.glasses, addGlass, removeGlass, bumpCalendarRefresh],
   );
 
   const onWaterDeltaMl = useCallback(
@@ -72,46 +114,59 @@ export default function HomeScreen() {
       const steps = Math.round(Math.abs(deltaMl) / 250);
       if (steps === 0) return;
       if (deltaMl < 0) {
-        for (let i = 0; i < steps; i++) await removeGlass(250);
+        for (let i = 0; i < steps; i += 1) await removeGlass(250);
       } else {
-        for (let i = 0; i < steps; i++) await addGlass(250);
+        for (let i = 0; i < steps; i += 1) await addGlass(250);
       }
       bumpCalendarRefresh();
     },
-    [addGlass, removeGlass, bumpCalendarRefresh]
+    [addGlass, removeGlass, bumpCalendarRefresh],
   );
+
+  const onWaterGoalChange = useCallback(
+    async (ml) => {
+      await updateGoalMl(ml);
+      bumpCalendarRefresh();
+    },
+    [updateGoalMl, bumpCalendarRefresh],
+  );
+
   const activityLog = useActivityLog(dateKey);
+  const stepsState = useSteps(dateKey, calendarRefreshKey);
   const progress = useProgress();
 
-  // --- Goals from user document ---
   const goals = userDoc?.goals || {};
   const calTarget = goals.calories || 0;
   const protTarget = goals.protein || 0;
   const carbTarget = goals.carbs || 0;
   const fatTarget = goals.fat || 0;
-  const waterTarget = goals.water || 2.5;
+  const defaultWaterGoalMl = Math.round((Number(goals.water) || 2.5) * 1000);
+  const effectiveWaterGoalMl =
+    waterData.goalMl != null && waterData.goalMl > 0 ? waterData.goalMl : defaultWaterGoalMl;
 
-  // --- Consumed totals from food log ---
   const consumed = foodLog.summary?.totalsLogged?.kcal ?? 0;
   const protConsumed = Math.round(foodLog.summary?.totalsLogged?.protein ?? 0);
   const carbConsumed = Math.round(foodLog.summary?.totalsLogged?.carbs ?? 0);
   const fatConsumed = Math.round(foodLog.summary?.totalsLogged?.fat ?? 0);
 
-  // --- Meals grouped by type ---
-  const mealGroups = {};
-  for (const entry of foodLog.entries) {
-    const key = entry.mealType || 'snack';
-    if (!mealGroups[key]) mealGroups[key] = [];
-    mealGroups[key].push(entry);
-  }
+  const mealGroups = useMemo(() => {
+    const g = { breakfast: [], lunch: [], dinner: [], snack: [] };
+    for (const entry of foodLog.entries) {
+      const key = MEAL_ORDER.includes(entry.mealType) ? entry.mealType : 'snack';
+      g[key].push(entry);
+    }
+    return g;
+  }, [foodLog.entries]);
+
   const meals = MEAL_ORDER.map((m) => ({
     id: m,
     type: m.charAt(0).toUpperCase() + m.slice(1),
     emoji: MEAL_EMOJI[m],
     items: (mealGroups[m] || []).map((e) => ({
       id: e.id,
+      entry: e,
       name: e.nameSnapshot || 'Food',
-      amount: `${e.grams || 0}g`,
+      amount: isManualFoodLogEntry(e) ? 'Manual' : `${e.grams || 0}g`,
       calories: e.nutrientsSnapshot?.kcal || 0,
       protein: Math.round(e.nutrientsSnapshot?.protein || 0),
       carbs: Math.round(e.nutrientsSnapshot?.carbs || 0),
@@ -119,27 +174,22 @@ export default function HomeScreen() {
     })),
   }));
 
-  // --- Activity ---
   const activityData = {
     caloriesBurned: activityLog.totalCaloriesBurned || 0,
     activeMinutes: activityLog.entries.reduce((sum, e) => sum + (e.durationMinutes || 0), 0),
-    steps: 0,
-    stepsGoal: 10000,
-    stepProgress: 0,
+    steps: stepsState.steps,
+    stepsGoal: stepsState.goal,
+    stepProgress: stepsState.stepProgressPercent,
   };
 
-  // --- Habits ---
-  const habitsForSummary = habits.map(h => ({
-    id: h.id,
-    name: h.name,
-    iconName: h.iconName || 'plus',
-    completed: !!completions[h.id]?.completed,
-    color: h.iconColor || '#FFFFFF',
-    bg: h.iconBg || '#8B5CF6',
-    category: h.category || 'General',
-  }));
+  const dashboardHabits = useMemo(
+    () =>
+      allHabitsUi.filter(
+        (h) => !h.archived && !h.isArchived && isHabitActiveOnDate(h, dateKey),
+      ),
+    [allHabitsUi, dateKey],
+  );
 
-  // --- Weight progress (same source as Progress tab: progressEntries) ---
   const progressData = useMemo(() => {
     const goalWeight = goals.targetWeight ?? null;
     const startWeight = goals.startWeight ?? null;
@@ -207,13 +257,94 @@ export default function HomeScreen() {
     goals.startWeight,
   ]);
 
-  // --- Empty states ---
   const recentlyLogged = [];
 
   const displayName = user?.displayName || 'there';
-  const avatarSource = user?.photoURL
-    ? { uri: user.photoURL }
-    : undefined;
+  const avatarSource = user?.photoURL ? { uri: user.photoURL } : undefined;
+
+  const [foodSearchOpen, setFoodSearchOpen] = useState(false);
+  const [searchMealType, setSearchMealType] = useState(null);
+  const [editEntry, setEditEntry] = useState(null);
+  const [editManualEntry, setEditManualEntry] = useState(null);
+
+  const openFoodSearch = useCallback((meal) => {
+    setSearchMealType(meal?.id || 'snack');
+    setFoodSearchOpen(true);
+  }, []);
+
+  const handleFoodLogged = useCallback(() => {
+    setFoodSearchOpen(false);
+    setSearchMealType(null);
+    bumpCalendarRefresh();
+  }, [bumpCalendarRefresh]);
+
+  const handleEditSave = useCallback(
+    async (entryId, changes) => {
+      try {
+        await foodLog.editEntry(entryId, changes);
+        bumpCalendarRefresh();
+      } finally {
+        setEditEntry(null);
+        setEditManualEntry(null);
+      }
+    },
+    [foodLog, bumpCalendarRefresh],
+  );
+
+  const handleDeleteEntry = useCallback(
+    (entryId) => {
+      Alert.alert(
+        'Remove food',
+        'Remove this item from your food log?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: async () => {
+              await foodLog.removeEntry(entryId);
+              bumpCalendarRefresh();
+            },
+          },
+        ],
+      );
+    },
+    [foodLog, bumpCalendarRefresh],
+  );
+
+  const handleClearMeal = useCallback(
+    async (mealTypeKey) => {
+      const ids = (mealGroups[mealTypeKey] || []).map((e) => e.id);
+      for (const id of ids) {
+        await foodLog.removeEntry(id);
+      }
+      bumpCalendarRefresh();
+    },
+    [mealGroups, foodLog, bumpCalendarRefresh],
+  );
+
+  const openEditEntry = useCallback((item) => {
+    const e = item?.entry;
+    if (!e) return;
+    if (isManualFoodLogEntry(e)) setEditManualEntry(e);
+    else setEditEntry(e);
+  }, []);
+
+  const onHabitPress = useCallback(
+    async (h) => {
+      if (h.type === 'yesno') {
+        try {
+          await toggleCompletion(h.id);
+          bumpCalendarRefresh();
+        } catch {
+          // ignore
+        }
+        return;
+      }
+      router.push('/(tabs)/habits');
+    },
+    [toggleCompletion, bumpCalendarRefresh, router],
+  );
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -244,7 +375,16 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        <DailyStreak badges={streakBadges} />
+        <StrikesRow
+          nutritionStreak={domainStreaks.nutritionStreak}
+          activityStreak={domainStreaks.activityStreak}
+          habitTrackerStreak={domainStreaks.habitTrackerStreak}
+          loading={domainStreaks.loading}
+          error={domainStreaks.error}
+          onPressNutrition={() => router.push('/(tabs)/nutrition')}
+          onPressActivity={() => router.push('/(tabs)/activity')}
+          onPressHabitTracker={() => router.push('/(tabs)/habits')}
+        />
 
         <CalorieRing
           consumed={consumed}
@@ -258,13 +398,30 @@ export default function HomeScreen() {
           fat={{ consumed: fatConsumed, target: fatTarget }}
         />
 
-        <MealLog meals={meals} />
+        <MealLog
+          meals={meals}
+          loading={foodLog.loading}
+          error={foodLog.error}
+          onAddFood={openFoodSearch}
+          onDeleteEntry={handleDeleteEntry}
+          onEditEntry={openEditEntry}
+          onClearMeal={handleClearMeal}
+        />
+
         <ActivitySummary data={activityData} />
-        <HabitsSummary habits={habitsForSummary} />
+
+        <HabitsSummary
+          habits={dashboardHabits}
+          loading={habitsLoading}
+          error={habitsError}
+          dateLabel={formatDateLabel(dateKey)}
+          onHabitPress={onHabitPress}
+        />
+
         <WaterTracker
           glasses={waterData.glasses}
           totalMl={waterData.totalMl}
-          targetLiters={waterTarget}
+          goalMl={effectiveWaterGoalMl}
           loading={waterLoading}
           onGlassSlotPress={async (slotIndex) => {
             const g = waterData.glasses;
@@ -272,7 +429,9 @@ export default function HomeScreen() {
             await syncWaterGlasses(next);
           }}
           onDeltaMl={onWaterDeltaMl}
+          onChangeGoalMl={onWaterGoalChange}
         />
+
         <ProgressSnapshot
           data={progressData}
           onViewAll={() => router.push('/(tabs)/progress')}
@@ -282,11 +441,58 @@ export default function HomeScreen() {
         <View style={styles.bottomSpacer} />
       </ScrollView>
 
-      <TouchableOpacity style={styles.fab} activeOpacity={0.8}>
+      <TouchableOpacity
+        style={styles.fab}
+        activeOpacity={0.8}
+        onPress={() => {
+          setSearchMealType('snack');
+          setFoodSearchOpen(true);
+        }}
+      >
         <Plus size={24} color={Colors.onPrimary} />
       </TouchableOpacity>
 
       <CalendarModal visible={calendarOpen} onClose={() => setCalendarOpen(false)} />
+
+      <Modal visible={foodSearchOpen} animationType="slide" onRequestClose={() => setFoodSearchOpen(false)}>
+        <SafeAreaView style={styles.searchModal} edges={['top']}>
+          <View style={styles.searchModalHeader}>
+            <Text style={styles.searchModalTitle}>Add food</Text>
+            <TouchableOpacity
+              onPress={() => {
+                setFoodSearchOpen(false);
+                setSearchMealType(null);
+              }}
+              style={styles.searchModalClose}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            >
+              <X size={22} color={Colors.textPrimary} />
+            </TouchableOpacity>
+          </View>
+          <View style={styles.searchModalBody}>
+            <FoodSearchView
+              initialMealType={searchMealType}
+              onFoodLogged={handleFoodLogged}
+              addEntry={foodLog.addEntry}
+              addManualEntry={foodLog.addManualEntry}
+              logDateKey={dateKey}
+            />
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      <EditEntrySheet
+        visible={!!editEntry}
+        entry={editEntry}
+        onSave={handleEditSave}
+        onClose={() => setEditEntry(null)}
+      />
+      <EditManualEntrySheet
+        visible={!!editManualEntry}
+        entry={editManualEntry}
+        onSave={handleEditSave}
+        onClose={() => setEditManualEntry(null)}
+      />
     </SafeAreaView>
   );
 }
@@ -366,5 +572,29 @@ const createStyles = (Colors) => StyleSheet.create({
   },
   bottomSpacer: {
     height: 20,
+  },
+  searchModal: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
+  searchModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Layout.screenPadding,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Colors.border,
+  },
+  searchModalTitle: {
+    fontSize: 18,
+    fontFamily: 'PlusJakartaSans-Bold',
+    color: Colors.textPrimary,
+  },
+  searchModalClose: {
+    padding: 8,
+  },
+  searchModalBody: {
+    flex: 1,
   },
 });

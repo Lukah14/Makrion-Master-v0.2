@@ -78,40 +78,62 @@ function round1(n: number): number {
   return Math.round(n * 10) / 10;
 }
 
-function mapServing(raw: Record<string, unknown>) {
-  const metricAmount = safeFloat(raw.metric_serving_amount);
-  const metricUnit = String(raw.metric_serving_unit ?? "");
-  const numberOfUnits = safeFloat(raw.number_of_units) || 1;
-  const description = String(raw.serving_description ?? "1 serving");
-  const isDefault = raw.is_default === "1" || raw.is_default === true;
+function pickRaw(raw: Record<string, unknown>, ...keys: string[]): unknown {
+  for (const k of keys) {
+    const v = raw[k];
+    if (v != null && v !== "") return v;
+  }
+  return undefined;
+}
+
+function mapServing(raw: Record<string, unknown>, index: number) {
+  const metricAmount = safeFloat(pickRaw(raw, "metric_serving_amount", "metricServingAmount"));
+  const metricUnit = String(pickRaw(raw, "metric_serving_unit", "metricServingUnit") ?? "");
+  const numberOfUnits = safeFloat(pickRaw(raw, "number_of_units", "numberOfUnits")) || 1;
+  const description = String(pickRaw(raw, "serving_description", "description") ?? "1 serving");
+  const isDef = pickRaw(raw, "is_default", "isDefault");
+  const isDefault = isDef === "1" || isDef === true || isDef === 1;
+
+  const sid = pickRaw(raw, "serving_id", "id", "servingId");
+  const idStr = sid != null && String(sid).trim() !== "" ? String(sid) : `fs_${index}`;
 
   return {
-    id: String(raw.serving_id ?? ""),
+    id: idStr,
     description,
     numberOfUnits,
     metricAmount,
     metricUnit,
     isDefault,
-    calories: Math.round(safeFloat(raw.calories)),
-    protein: round1(safeFloat(raw.protein)),
-    carbohydrate: round1(safeFloat(raw.carbohydrate)),
-    fat: round1(safeFloat(raw.fat)),
-    saturated_fat: round1(safeFloat(raw.saturated_fat)),
-    trans_fat: round1(safeFloat(raw.trans_fat)),
-    polyunsaturated_fat: round1(safeFloat(raw.polyunsaturated_fat)),
-    monounsaturated_fat: round1(safeFloat(raw.monounsaturated_fat)),
-    fiber: round1(safeFloat(raw.fiber)),
-    sugar: round1(safeFloat(raw.sugar)),
-    cholesterol: Math.round(safeFloat(raw.cholesterol)),
-    sodium: Math.round(safeFloat(raw.sodium)),
-    potassium: Math.round(safeFloat(raw.potassium)),
+    calories: Math.round(safeFloat(pickRaw(raw, "calories"))),
+    protein: round1(safeFloat(pickRaw(raw, "protein"))),
+    carbohydrate: round1(safeFloat(pickRaw(raw, "carbohydrate", "carbs"))),
+    fat: round1(safeFloat(pickRaw(raw, "fat"))),
+    saturated_fat: round1(safeFloat(pickRaw(raw, "saturated_fat", "saturatedFat"))),
+    trans_fat: round1(safeFloat(pickRaw(raw, "trans_fat", "transFat"))),
+    polyunsaturated_fat: round1(safeFloat(pickRaw(raw, "polyunsaturated_fat", "polyunsaturatedFat"))),
+    monounsaturated_fat: round1(safeFloat(pickRaw(raw, "monounsaturated_fat", "monounsaturatedFat"))),
+    fiber: round1(safeFloat(pickRaw(raw, "fiber"))),
+    sugar: round1(safeFloat(pickRaw(raw, "sugar"))),
+    cholesterol: Math.round(safeFloat(pickRaw(raw, "cholesterol"))),
+    sodium: Math.round(safeFloat(pickRaw(raw, "sodium"))),
+    potassium: Math.round(safeFloat(pickRaw(raw, "potassium"))),
   };
 }
 
 function mapFoodDetail(foodData: Record<string, unknown>) {
-  const servingsRaw = (foodData.servings as Record<string, unknown>)?.serving;
-  const servingsArr = Array.isArray(servingsRaw) ? servingsRaw : servingsRaw ? [servingsRaw] : [];
-  const servings = (servingsArr as Record<string, unknown>[]).map(mapServing);
+  const sRoot = foodData.servings as Record<string, unknown> | unknown[] | undefined;
+  let servingsArr: Record<string, unknown>[] = [];
+  if (Array.isArray(sRoot)) {
+    servingsArr = sRoot as Record<string, unknown>[];
+  } else if (sRoot && typeof sRoot === "object") {
+    const servingsRaw = (sRoot as Record<string, unknown>).serving;
+    servingsArr = Array.isArray(servingsRaw)
+      ? (servingsRaw as Record<string, unknown>[])
+      : servingsRaw
+      ? [servingsRaw as Record<string, unknown>]
+      : [];
+  }
+  const servings = servingsArr.map((row, i) => mapServing(row, i));
 
   return {
     id: String(foodData.food_id ?? ""),

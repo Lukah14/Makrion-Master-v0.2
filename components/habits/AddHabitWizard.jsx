@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, Modal, StyleSheet, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '@/context/ThemeContext';
@@ -8,6 +8,17 @@ import WizardStepType from './WizardStepType';
 import WizardStepDefine from './WizardStepDefine';
 import WizardStepSchedule from './WizardStepSchedule';
 import { getIconNameForCategory } from './habitIconMap';
+import {
+  displayLabelToConditionType,
+  conditionTypeToDisplayLabel,
+  normalizeNumericConditionType,
+  NUMERIC_CONDITION,
+} from '@/lib/habitNumericCondition';
+
+function parseGoalNumber(str) {
+  const n = parseFloat(String(str ?? '').replace(',', '.').trim());
+  return Number.isFinite(n) ? n : NaN;
+}
 
 const TOTAL_STEPS = 4;
 
@@ -63,6 +74,37 @@ export default function AddHabitWizard({ visible, onClose, onSave, editingHabit 
     setShowScheduleDetails(false);
   };
 
+  useEffect(() => {
+    if (!visible) return;
+    if (editingHabit) {
+      setCurrentStep(1);
+      setSelectedCategory(editingHabit?.category ? { name: editingHabit.category } : null);
+      setHabitType(editingHabit.type || '');
+      setHabitName(editingHabit.name || '');
+      setDescription(editingHabit.description || '');
+      if (editingHabit.type === 'numeric') {
+        const ct = normalizeNumericConditionType(editingHabit);
+        setCondition(conditionTypeToDisplayLabel(ct));
+        setTargetValue(
+          ct === NUMERIC_CONDITION.ANY_VALUE
+            ? ''
+            : String(editingHabit.target ?? editingHabit.targetValue ?? ''),
+        );
+      } else {
+        setTargetValue(editingHabit?.target != null ? String(editingHabit.target) : '');
+      }
+      setTargetUnit(editingHabit.unit || '');
+      setChecklistItems(editingHabit.checklistItems || []);
+      setRepeatRule(editingHabit.repeatRule || 'daily');
+      setRepeatDays(editingHabit.repeatDays || []);
+      setEndDateEnabled(editingHabit.endDateEnabled || false);
+      setEndDateDays(editingHabit.endDateDays?.toString() || '60');
+      setShowScheduleDetails(false);
+    } else {
+      resetForm();
+    }
+  }, [visible, editingHabit?.id]);
+
   const handleClose = () => {
     resetForm();
     onClose();
@@ -91,6 +133,20 @@ export default function AddHabitWizard({ visible, onClose, onSave, editingHabit 
   };
 
   const handleSave = () => {
+    const numericCondition =
+      habitType === 'numeric' ? displayLabelToConditionType(condition) : 'at_least';
+    let resolvedTarget = null;
+    if (habitType === 'numeric') {
+      if (numericCondition === NUMERIC_CONDITION.ANY_VALUE) {
+        resolvedTarget = null;
+      } else {
+        const g = parseGoalNumber(targetValue);
+        resolvedTarget = Number.isFinite(g) && g > 0 ? g : 1;
+      }
+    } else {
+      resolvedTarget = parseInt(targetValue, 10) || 1;
+    }
+
     const habitData = {
       id: editingHabit?.id || `h-${Date.now()}`,
       name: habitName,
@@ -99,13 +155,20 @@ export default function AddHabitWizard({ visible, onClose, onSave, editingHabit 
       description,
       emoji: getDefaultEmoji(selectedCategory?.name),
       iconName: selectedCategory?.iconName || getIconNameForCategory(selectedCategory?.name),
-      target: parseInt(targetValue) || 1,
-      current: 0,
+      conditionType: habitType === 'numeric' ? numericCondition : undefined,
+      target: resolvedTarget,
+      targetValue: resolvedTarget,
+      current: editingHabit?.current ?? 0,
       unit: targetUnit,
       checklistItems: habitType === 'checklist' ? checklistItems : null,
       repeatRule,
       repeatDays,
-      startDate: new Date().toISOString().split('T')[0],
+      startDate:
+        (typeof editingHabit?.startDate === 'string' && editingHabit.startDate.length >= 10
+          ? editingHabit.startDate.slice(0, 10)
+          : null) ||
+        editingHabit?.schedule?.startDateKey ||
+        new Date().toISOString().split('T')[0],
       endDate: endDateEnabled ? null : null,
       endDateEnabled,
       endDateDays: endDateEnabled ? parseInt(endDateDays) : null,
@@ -115,11 +178,11 @@ export default function AddHabitWizard({ visible, onClose, onSave, editingHabit 
       color: selectedCategory?.iconBgColor || '#2DA89E',
       iconBg: selectedCategory?.iconBgColor || '#2DA89E',
       iconColor: selectedCategory?.iconColor || '#000000',
-      isPaused: false,
+      isPaused: editingHabit?.isPaused ?? false,
       isArchived: false,
-      streak: 0,
-      completed: false,
-      sortOrder: 0,
+      streak: editingHabit?.streak ?? 0,
+      completed: editingHabit?.completed ?? false,
+      sortOrder: editingHabit?.sortOrder ?? 0,
     };
     onSave(habitData);
     handleClose();
@@ -129,7 +192,14 @@ export default function AddHabitWizard({ visible, onClose, onSave, editingHabit 
     switch (currentStep) {
       case 1: return !!selectedCategory;
       case 2: return !!habitType;
-      case 3: return habitName.trim().length > 0;
+      case 3: {
+        if (habitName.trim().length === 0) return false;
+        if (habitType !== 'numeric') return true;
+        const ct = displayLabelToConditionType(condition);
+        if (ct === NUMERIC_CONDITION.ANY_VALUE) return true;
+        const g = parseGoalNumber(targetValue);
+        return Number.isFinite(g) && g > 0;
+      }
       case 4: return true;
       default: return false;
     }
@@ -184,7 +254,10 @@ export default function AddHabitWizard({ visible, onClose, onSave, editingHabit 
               timerValue={timerValue}
               onTimerValueChange={setTimerValue}
               condition={condition}
-              onConditionChange={setCondition}
+              onConditionChange={(c) => {
+                setCondition(c);
+                if (c === 'Any value') setTargetValue('');
+              }}
               extraGoals={extraGoals}
               onExtraGoalsChange={setExtraGoals}
               checklistItems={checklistItems}

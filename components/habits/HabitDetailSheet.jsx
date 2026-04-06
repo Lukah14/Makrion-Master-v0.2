@@ -3,6 +3,13 @@ import { X, Pencil, SkipForward, Trash2, Copy, Flame, Calendar, Clock, Target } 
 import { useTheme } from '@/context/ThemeContext';
 import { Layout } from '@/constants/layout';
 import { habitIconMap, getIconForCategory } from './habitIconMap';
+import {
+  normalizeNumericConditionType,
+  getNumericTargetValue,
+  numericHabitProgressPercent,
+  conditionTypeToDisplayLabel,
+  NUMERIC_CONDITION,
+} from '@/lib/habitNumericCondition';
 
 const TYPE_LABELS = {
   yesno: 'Yes/No',
@@ -25,12 +32,32 @@ export default function HabitDetailSheet({ habit, visible, onClose, onEdit, onSk
   const styles = createStyles(Colors);
   if (!habit) return null;
 
+  const numericCond = habit.type === 'numeric' ? normalizeNumericConditionType(habit) : null;
+  const isAnyNumeric = numericCond === NUMERIC_CONDITION.ANY_VALUE;
+
   const isCompleted =
     habit.type === 'yesno'
       ? habit.completed
       : habit.type === 'checklist'
         ? habit.checklistItems?.every((item) => item.completed)
-        : habit.current >= habit.target;
+        : habit.type === 'timer'
+          ? habit.completed
+          : habit.type === 'numeric'
+            ? isAnyNumeric
+              ? false
+              : habit.completed
+            : !!habit.completed;
+
+  const numericTgt = habit.type === 'numeric' ? getNumericTargetValue(habit) : null;
+  const numericProgressPct =
+    habit.type === 'numeric' && !isAnyNumeric
+      ? numericHabitProgressPercent(
+          habit.current,
+          numericCond,
+          numericTgt,
+          !!habit.completed,
+        )
+      : 0;
 
   return (
     <Modal visible={visible} animationType="slide" transparent>
@@ -61,8 +88,16 @@ export default function HabitDetailSheet({ habit, visible, onClose, onEdit, onSk
           <ScrollView style={styles.detailsScroll} showsVerticalScrollIndicator={false}>
             <View style={styles.statsRow}>
               <View style={styles.statItem}>
-                <Text style={styles.statValue}>{isCompleted ? 'Done' : 'Pending'}</Text>
-                <Text style={styles.statLabel}>Status</Text>
+                <Text style={styles.statValue}>
+                  {isAnyNumeric
+                    ? habit.numericDayHasEntry
+                      ? String(habit.current ?? 0)
+                      : '—'
+                    : isCompleted
+                      ? 'Done'
+                      : 'Pending'}
+                </Text>
+                <Text style={styles.statLabel}>{isAnyNumeric ? 'Logged' : 'Status'}</Text>
               </View>
               <View style={styles.statItem}>
                 <View style={styles.streakValue}>
@@ -83,14 +118,41 @@ export default function HabitDetailSheet({ habit, visible, onClose, onEdit, onSk
                 <Text style={styles.detailLabel}>Repeat</Text>
                 <Text style={styles.detailValue}>{REPEAT_LABELS[habit.repeatRule] || 'Daily'}</Text>
               </View>
-              {habit.type !== 'yesno' && (
+              {habit.type === 'numeric' && (
+                <>
+                  <View style={styles.detailRow}>
+                    <Target size={16} color={Colors.textTertiary} />
+                    <Text style={styles.detailLabel}>Condition</Text>
+                    <Text style={styles.detailValue}>
+                      {conditionTypeToDisplayLabel(numericCond)}
+                      {numericTgt != null
+                        ? ` · ${numericTgt}${habit.unit ? ` ${habit.unit}` : ''}`
+                        : habit.unit
+                          ? ` · ${habit.unit}`
+                          : ''}
+                    </Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Target size={16} color={Colors.textTertiary} />
+                    <Text style={styles.detailLabel}>Progress</Text>
+                    <Text style={styles.detailValue}>
+                      {isAnyNumeric && !habit.numericDayHasEntry
+                        ? '—'
+                        : habit.current ?? 0}
+                      {numericTgt != null ? ` / ${numericTgt}` : ''}
+                      {habit.unit ? ` ${habit.unit}` : ''}
+                    </Text>
+                  </View>
+                </>
+              )}
+              {habit.type !== 'yesno' && habit.type !== 'numeric' && (
                 <View style={styles.detailRow}>
                   <Target size={16} color={Colors.textTertiary} />
                   <Text style={styles.detailLabel}>Target</Text>
                   <Text style={styles.detailValue}>{habit.target} {habit.unit}</Text>
                 </View>
               )}
-              {habit.type !== 'yesno' && (
+              {habit.type !== 'yesno' && habit.type !== 'numeric' && (
                 <View style={styles.detailRow}>
                   <Target size={16} color={Colors.textTertiary} />
                   <Text style={styles.detailLabel}>Progress</Text>
@@ -106,7 +168,19 @@ export default function HabitDetailSheet({ habit, visible, onClose, onEdit, onSk
               )}
             </View>
 
-            {habit.type !== 'yesno' && (
+            {habit.type === 'numeric' && !isAnyNumeric && (
+              <View style={styles.progressSection}>
+                <View style={styles.progressBar}>
+                  <View
+                    style={[styles.progressFill, { width: `${numericProgressPct}%` }]}
+                  />
+                </View>
+                <Text style={styles.progressText}>
+                  {Math.round(numericProgressPct)}% complete
+                </Text>
+              </View>
+            )}
+            {habit.type !== 'yesno' && habit.type !== 'numeric' && (
               <View style={styles.progressSection}>
                 <View style={styles.progressBar}>
                   <View

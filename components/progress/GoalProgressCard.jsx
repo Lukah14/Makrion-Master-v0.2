@@ -1,12 +1,33 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Dimensions } from 'react-native';
 import Svg, { Polyline, Line, Text as SvgText, Defs, LinearGradient, Stop, Polygon } from 'react-native-svg';
 import { Flag } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
+import { todayDateKey, parseDateKey, toDateKey } from '@/lib/dateKey';
 
 const screenWidth = Dimensions.get('window').width - 48;
 
 const TIME_RANGES = ['90 Days', '6 Months', '1 Year', 'All time'];
+
+function startKeyForRange(rangeLabel) {
+  const end = todayDateKey();
+  if (rangeLabel === 'All time') return null;
+  const endD = parseDateKey(end);
+  if (rangeLabel === '90 Days') {
+    endD.setDate(endD.getDate() - 89);
+    return toDateKey(endD);
+  }
+  if (rangeLabel === '6 Months') {
+    endD.setMonth(endD.getMonth() - 6);
+    return toDateKey(endD);
+  }
+  if (rangeLabel === '1 Year') {
+    endD.setFullYear(endD.getFullYear() - 1);
+    return toDateKey(endD);
+  }
+  endD.setDate(endD.getDate() - 89);
+  return toDateKey(endD);
+}
 
 function WeightLineChart({ data }) {
   const { colors: Colors } = useTheme();
@@ -18,6 +39,16 @@ function WeightLineChart({ data }) {
   const padRight = 12;
   const innerW = chartWidth - padLeft - padRight;
   const innerH = chartHeight - padTop - padBottom;
+
+  if (!data?.length) {
+    return (
+      <View style={{ height: 160, justifyContent: 'center', alignItems: 'center' }}>
+        <Text style={{ color: Colors.textTertiary, fontFamily: 'PlusJakartaSans-Medium' }}>
+          No entries in this range
+        </Text>
+      </View>
+    );
+  }
 
   const values = data.map((d) => d.value);
   const minVal = Math.min(...values) - 0.5;
@@ -120,17 +151,54 @@ function WeightLineChart({ data }) {
   );
 }
 
-export default function GoalProgressCard({ currentWeight, goalWeight, startWeight, hasData, weightHistory = [] }) {
+/**
+ * @param {Object} props
+ * @param {number|null|undefined} props.currentWeight  latest weight (overall)
+ * @param {number|null|undefined} props.goalWeight
+ * @param {number|null|undefined} props.startWeight
+ * @param {boolean} props.hasData
+ * @param {Array<{ dateKey: string, weightKg: number }>} props.entries  ascending by dateKey
+ */
+export default function GoalProgressCard({
+  currentWeight,
+  goalWeight,
+  startWeight,
+  hasData,
+  entries = [],
+}) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
-  const [range, setRange] = useState('All time');
-  const data = weightHistory.length > 0 ? weightHistory : [{ label: 'Now', value: currentWeight }];
+  const [range, setRange] = useState('90 Days');
 
-  const total = Math.abs(goalWeight - startWeight);
-  const done = Math.abs(currentWeight - startWeight);
-  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  const chartData = useMemo(() => {
+    const start = startKeyForRange(range);
+    const filtered =
+      start == null
+        ? entries
+        : entries.filter((e) => e.dateKey >= start);
+    return filtered.map((e) => ({
+      label: new Date(e.dateKey + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      value: e.weightKg,
+      dateKey: e.dateKey,
+    }));
+  }, [entries, range]);
 
-  const isActive = hasData && data.length > 1;
+  const data =
+    chartData.length > 0
+      ? chartData
+      : currentWeight != null && Number.isFinite(Number(currentWeight))
+        ? [{ label: 'Now', value: Number(currentWeight) }]
+        : [];
+
+  const sw = startWeight != null && Number.isFinite(Number(startWeight)) ? Number(startWeight) : null;
+  const gw = goalWeight != null && Number.isFinite(Number(goalWeight)) ? Number(goalWeight) : null;
+  const cw = currentWeight != null && Number.isFinite(Number(currentWeight)) ? Number(currentWeight) : null;
+
+  const total = sw != null && gw != null ? Math.abs(gw - sw) : 0;
+  const done = sw != null && cw != null ? Math.abs(cw - sw) : 0;
+  const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+
+  const isActive = hasData && chartData.length > 1;
 
   const bannerText = isActive
     ? "You're making progress—now's the time to keep pushing!"

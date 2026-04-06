@@ -4,7 +4,7 @@ import {
   Image, StyleSheet, ActivityIndicator,
 } from 'react-native';
 import {
-  Search, X, ScanLine, Plus,
+  Search, X, Plus,
   Sparkles, FileText, SlidersHorizontal, UtensilsCrossed,
 } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
@@ -19,6 +19,7 @@ import { myFoodToSearchModel } from '@/services/foodService';
 import FilterSheet from './FilterSheet';
 import AddToLogSheet from './AddToLogSheet';
 import FoodDetailScreen from './FoodDetailScreen';
+import CompareFoodsScreen from './CompareFoodsScreen';
 import CreateFoodForm from './CreateFoodForm';
 import ManualAddSheet from './ManualAddSheet';
 
@@ -283,7 +284,13 @@ function MyFoodsTab({ myFoods, onAddPress, onFoodPress, onCreate }) {
   );
 }
 
-export default function FoodSearchView({ initialMealType, onFoodLogged, addEntry: parentAddEntry, logDateKey }) {
+export default function FoodSearchView({
+  initialMealType,
+  onFoodLogged,
+  addEntry: parentAddEntry,
+  addManualEntry: parentAddManualEntry,
+  logDateKey,
+}) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
 
@@ -307,6 +314,7 @@ export default function FoodSearchView({ initialMealType, onFoodLogged, addEntry
   const [loading, setLoading] = useState(false);
   const [searchError, setSearchError] = useState(null);
   const [detailFood, setDetailFood] = useState(null);
+  const [compareSession, setCompareSession] = useState(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const toastTimer = useRef(null);
@@ -446,33 +454,37 @@ export default function FoodSearchView({ initialMealType, onFoodLogged, addEntry
   };
 
   const handleManualAdd = async ({
-    name: entryName, calories: cal,
-    protein: p, carbs: c, fiber: fb, sugars: su,
-    fat: f, saturatedFat: sf, transFat: tf,
-    sodium: sod, mealType: meal,
+    name: entryName,
+    calories: cal,
+    protein: p,
+    carbs: c,
+    fat: f,
+    fiber: fb,
+    sugars: su,
+    sodium: sod,
+    mealType: meal,
   }) => {
     if (!user) {
       showToast('Please sign in to log food');
       throw new Error('Not signed in');
     }
-    if (!parentAddEntry) {
+    if (!parentAddManualEntry) {
       showToast('Unable to save — try again');
-      throw new Error('addEntry prop missing');
+      throw new Error('addManualEntry prop missing');
     }
-    const manualFood = {
-      id: `manual_${Date.now()}`,
+    await parentAddManualEntry({
       name: entryName,
-      brand: '',
-      per100g: {
-        kcal: cal, protein: p, carbs: c, fat: f,
-        fiber: fb, sugars: su,
-        saturatedFat: sf, transFat: tf,
+      mealType: meal,
+      nutrientsSnapshot: {
+        kcal: cal,
+        protein: p,
+        carbs: c,
+        fat: f,
+        fiber: fb,
+        sugars: su,
         sodium: sod,
       },
-      servingGrams: 100,
-      source: 'manual',
-    };
-    await parentAddEntry(manualFood, meal, 100);
+    });
     const dayNote =
       logDateKey && logDateKey !== todayDateKey() ? ` (${logDateKey})` : '';
     showToast(`${cal} kcal added to ${meal}${dayNote}`);
@@ -590,6 +602,21 @@ export default function FoodSearchView({ initialMealType, onFoodLogged, addEntry
   const results = applyClientFilters(apiResults);
   const hasResults = results.length > 0;
 
+  if (compareSession) {
+    return (
+      <CompareFoodsScreen
+        initialFoods={Array.isArray(compareSession.seeds) ? compareSession.seeds : []}
+        onBack={() => {
+          const restore = compareSession.restoreDetail;
+          setCompareSession(null);
+          if (restore) setDetailFood(restore);
+        }}
+        myFoodsModels={myFoods.searchModels}
+        savedFoodsList={savedFoodsList}
+      />
+    );
+  }
+
   if (showCreateForm) {
     return (
       <CreateFoodForm
@@ -608,6 +635,10 @@ export default function FoodSearchView({ initialMealType, onFoodLogged, addEntry
         onAddToLog={(food) => {
           setDetailFood(null);
           handleAddPress(food);
+        }}
+        onCompare={(food) => {
+          setCompareSession({ seeds: [food], restoreDetail: food });
+          setDetailFood(null);
         }}
       />
     );
@@ -643,7 +674,7 @@ export default function FoodSearchView({ initialMealType, onFoodLogged, addEntry
               <Search size={18} color={Colors.textTertiary} />
               <TextInput
                 style={styles.searchInput}
-                placeholder="Search foods, brands, or barcode"
+                placeholder="Search foods or brands"
                 placeholderTextColor={Colors.textTertiary}
                 value={query}
                 onChangeText={handleQueryChange}
@@ -655,11 +686,7 @@ export default function FoodSearchView({ initialMealType, onFoodLogged, addEntry
                 <TouchableOpacity onPress={handleClear} activeOpacity={0.7}>
                   <X size={18} color={Colors.textTertiary} />
                 </TouchableOpacity>
-              ) : (
-                <TouchableOpacity activeOpacity={0.7}>
-                  <ScanLine size={18} color={Colors.textTertiary} />
-                </TouchableOpacity>
-              )}
+              ) : null}
             </View>
           </View>
 
@@ -679,10 +706,6 @@ export default function FoodSearchView({ initialMealType, onFoodLogged, addEntry
             >
               <SlidersHorizontal size={16} color={hasActiveFilters ? Colors.onPrimary : Colors.textSecondary} />
               <Text style={[styles.quickActionText, hasActiveFilters && styles.quickActionTextActive]}>Filter</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.quickActionBtn} activeOpacity={0.8}>
-              <ScanLine size={16} color={Colors.textSecondary} />
-              <Text style={styles.quickActionText}>Scan</Text>
             </TouchableOpacity>
           </View>
 

@@ -14,15 +14,23 @@ function formatFooter(lastDate) {
 export default function WeightSummaryCard({ currentWeight, goalWeight, startWeight, lastDate }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
-  const total = Math.abs(goalWeight - startWeight);
-  const done = Math.abs(currentWeight - startWeight);
+  const cw = currentWeight != null && Number.isFinite(Number(currentWeight)) ? Number(currentWeight) : null;
+  const gw = goalWeight != null && Number.isFinite(Number(goalWeight)) ? Number(goalWeight) : null;
+  const sw = startWeight != null && Number.isFinite(Number(startWeight)) ? Number(startWeight) : null;
+  const total = sw != null && gw != null ? Math.abs(gw - sw) : 0;
+  const done = sw != null && cw != null ? Math.abs(cw - sw) : 0;
   const progress = total > 0 ? Math.min(done / total, 1) : 0;
+
+  const weightDisplay =
+    cw != null
+      ? `${cw % 1 === 0 ? String(cw) : cw.toFixed(1)}`
+      : '—';
 
   return (
     <View style={styles.card}>
       <Text style={styles.label}>My Weight</Text>
       <Text style={styles.value}>
-        {currentWeight} <Text style={styles.unit}>kg</Text>
+        {weightDisplay} <Text style={styles.unit}>kg</Text>
       </Text>
 
       <View style={styles.barTrack}>
@@ -30,7 +38,10 @@ export default function WeightSummaryCard({ currentWeight, goalWeight, startWeig
       </View>
 
       <Text style={styles.goalText}>
-        Goal <Text style={styles.goalBold}>{goalWeight} kg</Text>
+        Goal{' '}
+        <Text style={styles.goalBold}>
+          {gw != null ? `${gw % 1 === 0 ? String(gw) : gw.toFixed(1)} kg` : '—'}
+        </Text>
       </Text>
 
       <View style={styles.footer}>

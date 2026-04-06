@@ -3,8 +3,10 @@ import { useAuth } from '@/context/AuthContext';
 import {
   getWeightEntries,
   getWeightEntriesByRange,
-  addWeightEntry,
+  upsertWeightEntry,
   getLatestWeightEntry,
+  deleteWeightEntryForDate,
+  moveWeightEntry,
 } from '@/services/weightEntryService';
 
 export function useWeightEntries() {
@@ -35,15 +37,43 @@ export function useWeightEntries() {
 
   const add = useCallback(async (data) => {
     if (!user) throw new Error('Not authenticated');
-    const id = await addWeightEntry(user.uid, data);
+    const id = await upsertWeightEntry(user.uid, data);
     await load();
     return id;
   }, [user, load]);
+
+  const removeByDateKey = useCallback(
+    async (dateKey) => {
+      if (!user) throw new Error('Not authenticated');
+      await deleteWeightEntryForDate(user.uid, dateKey);
+      await load();
+    },
+    [user, load],
+  );
+
+  const moveEntry = useCallback(
+    async (fromDateKey, toDateKey, weightKg) => {
+      if (!user) throw new Error('Not authenticated');
+      await moveWeightEntry(user.uid, fromDateKey, toDateKey, weightKg);
+      await load();
+    },
+    [user, load],
+  );
 
   const getByRange = useCallback(async (startKey, endKey) => {
     if (!user) return [];
     return getWeightEntriesByRange(user.uid, startKey, endKey);
   }, [user]);
 
-  return { entries, latest, loading, error, add, getByRange, reload: load };
+  return {
+    entries,
+    latest,
+    loading,
+    error,
+    add,
+    removeByDateKey,
+    moveEntry,
+    getByRange,
+    reload: load,
+  };
 }

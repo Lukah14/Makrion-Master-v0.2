@@ -35,8 +35,11 @@ export default function GoalPhaseCard({ goal, onEdit }) {
   const cfg = GOAL_CONFIG[goal.type] || GOAL_CONFIG['Custom'];
   const IconComp = cfg.icon;
 
-  const total = Math.abs(goal.targetWeight - goal.startWeight);
-  const done = Math.abs(goal.currentWeight - goal.startWeight);
+  const sw = goal.startWeight != null && Number.isFinite(Number(goal.startWeight)) ? Number(goal.startWeight) : null;
+  const tw = goal.targetWeight != null && Number.isFinite(Number(goal.targetWeight)) ? Number(goal.targetWeight) : null;
+  const cw = goal.currentWeight != null && Number.isFinite(Number(goal.currentWeight)) ? Number(goal.currentWeight) : null;
+  const total = sw != null && tw != null ? Math.abs(tw - sw) : 0;
+  const done = sw != null && cw != null ? Math.abs(cw - sw) : 0;
   const progress = total > 0 ? Math.min(done / total, 1) : 0;
 
   return (
@@ -53,10 +56,10 @@ export default function GoalPhaseCard({ goal, onEdit }) {
       </View>
 
       <View style={styles.weightRow}>
-        <Text style={styles.weightVal}>{goal.startWeight} kg</Text>
+        <Text style={styles.weightVal}>{sw != null ? `${sw} kg` : '—'}</Text>
         <View style={[styles.targetBadge]}>
           <Target size={11} color={Colors.success} />
-          <Text style={styles.targetText}>{goal.targetWeight} kg</Text>
+          <Text style={styles.targetText}>{tw != null ? `${tw} kg` : '—'}</Text>
         </View>
       </View>
 
@@ -70,7 +73,7 @@ export default function GoalPhaseCard({ goal, onEdit }) {
       </View>
 
       <TouchableOpacity style={styles.editBtn} onPress={onEdit} activeOpacity={0.8}>
-        <Text style={styles.editBtnText}>Update Progress</Text>
+        <Text style={styles.editBtnText}>Log weight</Text>
       </TouchableOpacity>
     </View>
   );

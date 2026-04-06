@@ -22,6 +22,7 @@ import {
   getHabitCompletionsByDate,
   upsertHabitCompletion,
   deleteHabitCompletionForDate,
+  deleteAllCompletionsForHabit,
   listHabitCompletionsForHabit as fetchCompletionsForHabit,
   listHabitCompletionsSince as fetchCompletionsSince,
 } from '@/services/habitCompletionService';
@@ -99,7 +100,21 @@ export async function createHabit(uid, data) {
     data.endDateDays,
   );
 
-  const target = Number(data.target ?? data.targetValue) || 1;
+  const habitType = data.type || 'yesno';
+  const conditionType = data.conditionType || 'at_least';
+  const isAnyNumeric = habitType === 'numeric' && conditionType === 'any_value';
+  let target = null;
+  if (habitType === 'numeric') {
+    if (isAnyNumeric) {
+      target = null;
+    } else {
+      const n = Number(data.target ?? data.targetValue);
+      target = Number.isFinite(n) && n > 0 ? n : 1;
+    }
+  } else {
+    const n = Number(data.target ?? data.targetValue);
+    target = Number.isFinite(n) && n > 0 ? n : 1;
+  }
   const current = Number(data.current) || 0;
 
   const payload = stripUndefined({
@@ -107,13 +122,14 @@ export async function createHabit(uid, data) {
     name: data.name || '',
     description: data.description || '',
     category: data.category || 'health',
-    type: data.type || 'yesno',
+    type: habitType,
     icon: data.icon || data.iconName || 'check',
     color: data.color || '#2DA89E',
     emoji: data.emoji ?? null,
     iconName: data.iconName ?? null,
     iconBg: data.iconBg ?? null,
     iconColor: data.iconColor ?? null,
+    conditionType: habitType === 'numeric' ? conditionType : undefined,
     target,
     current,
     targetValue: target,
@@ -144,6 +160,7 @@ export async function createHabit(uid, data) {
     evaluation: {
       targetValue: target,
       unit: data.unit || null,
+      conditionType: habitType === 'numeric' ? conditionType : null,
       checklistTargetCount: Array.isArray(data.checklistItems) ? data.checklistItems.length : null,
       ratingMin: null,
       ratingMax: null,
@@ -172,6 +189,18 @@ export async function listHabits(uid) {
     .filter((h) => !(h.archived === true || h.isArchived === true));
 }
 
+const PATCH_STRIP_KEYS = new Set([
+  'startDate',
+  'endDate',
+  'endDateEnabled',
+  'endDateDays',
+  'completionHistory',
+  'notes',
+  'dayTrackingStatus',
+  '_timerElapsedSec',
+  '_timerTargetSec',
+]);
+
 export async function updateHabit(uid, habitId, changes) {
   const { id: _id, createdAt: _c, ...raw } = changes;
   const patch = stripUndefined({
@@ -185,28 +214,105 @@ export async function updateHabit(uid, habitId, changes) {
       Array.isArray(raw.repeatDays) ? raw.repeatDays : [],
     );
   }
-  if (typeof raw.startDate === 'string' && raw.startDate.length >= 10) {
-    const sk = raw.startDate.slice(0, 10);
+
+  const hasStart =
+    typeof raw.startDate === 'string' && raw.startDate.length >= 10;
+  const hasEndField = Object.prototype.hasOwnProperty.call(raw, 'endDate');
+
+  if (hasStart || hasEndField || raw.endDateEnabled !== undefined) {
+    const snap = await getDoc(habitRef(uid, habitId));
+    const cur = snap.exists() ? snap.data() : {};
+    const curSch = { ...(cur.schedule || {}) };
+    let sk = curSch.startDateKey;
+    if (hasStart) sk = raw.startDate.slice(0, 10);
+    else if (typeof cur.startDate === 'string' && cur.startDate.length >= 10) {
+      sk = cur.startDate.slice(0, 10);
+    }
+    if (!sk) sk = toDateKey(new Date());
+
+    let endKey = curSch.endDateKey ?? null;
+    if (hasEndField) {
+      const ed = raw.endDate;
+      endKey = ed && String(ed).length >= 10 ? String(ed).slice(0, 10) : null;
+    } else if (raw.endDateEnabled === true && raw.endDateDays) {
+      endKey = computeEndDateKey(sk, true, raw.endDateDays);
+    } else if (raw.endDateEnabled === false) {
+      endKey = null;
+    }
+
     patch.schedule = {
+      ...curSch,
       startDateKey: sk,
-      endDateKey: computeEndDateKey(sk, raw.endDateEnabled, raw.endDateDays),
-      reminderEnabled: !!(raw.reminderTime || raw.reminderEnabled),
-      reminderTime: raw.reminderTime ?? null,
-      priority: raw.priority === 'default' ? 'medium' : raw.priority || 'medium',
+      endDateKey: endKey,
+      reminderEnabled:
+        raw.reminderTime != null || raw.reminderEnabled != null
+          ? !!(raw.reminderTime || raw.reminderEnabled)
+          : (curSch.reminderEnabled ?? false),
+      reminderTime:
+        raw.reminderTime !== undefined ? raw.reminderTime : (curSch.reminderTime ?? null),
+      priority:
+        raw.priority !== undefined
+          ? (raw.priority === 'default' ? 'medium' : raw.priority || 'medium')
+          : (curSch.priority || 'medium'),
     };
   }
+  if (raw.type === 'numeric' && raw.conditionType != null) {
+    patch.conditionType = raw.conditionType;
+    if (raw.conditionType === 'any_value') {
+      patch.target = null;
+      patch.targetValue = null;
+      patch.evaluation = {
+        targetValue: null,
+        unit: raw.unit ?? null,
+        conditionType: 'any_value',
+        checklistTargetCount: Array.isArray(raw.checklistItems) ? raw.checklistItems.length : null,
+        ratingMin: null,
+        ratingMax: null,
+      };
+    }
+  }
+
   if (raw.target != null || raw.targetValue != null) {
     const t = Number(raw.target ?? raw.targetValue);
-    if (!Number.isNaN(t) && t > 0) {
+    if (raw.conditionType === 'any_value') {
+      /* target cleared above */
+    } else if (!Number.isNaN(t) && t > 0) {
       patch.target = t;
       patch.targetValue = t;
       patch.evaluation = {
         targetValue: t,
         unit: raw.unit ?? null,
+        conditionType: raw.conditionType || patch.conditionType || null,
         checklistTargetCount: Array.isArray(raw.checklistItems) ? raw.checklistItems.length : null,
         ratingMin: null,
         ratingMax: null,
       };
+    }
+  }
+
+  if (
+    raw.type === 'numeric' &&
+    raw.conditionType != null &&
+    raw.conditionType !== 'any_value' &&
+    raw.target == null &&
+    raw.targetValue == null
+  ) {
+    const snap = await getDoc(habitRef(uid, habitId));
+    if (snap.exists()) {
+      const cur = snap.data();
+      const existingT = Number(cur.target ?? cur.targetValue ?? cur.evaluation?.targetValue);
+      if (Number.isFinite(existingT) && existingT > 0) {
+        patch.evaluation = {
+          targetValue: existingT,
+          unit: raw.unit ?? cur.unit ?? cur.evaluation?.unit ?? null,
+          conditionType: raw.conditionType,
+          checklistTargetCount: Array.isArray(raw.checklistItems)
+            ? raw.checklistItems.length
+            : cur.evaluation?.checklistTargetCount ?? null,
+          ratingMin: null,
+          ratingMax: null,
+        };
+      }
     }
   }
 
@@ -222,10 +328,21 @@ export async function updateHabit(uid, habitId, changes) {
     patch.paused = raw.isPaused ?? raw.paused;
     patch.isPaused = raw.paused ?? raw.isPaused;
   }
+
+  for (const k of PATCH_STRIP_KEYS) {
+    delete patch[k];
+  }
+
   await updateDoc(habitRef(uid, habitId), patch);
 }
 
+/** Remove all completion rows for one habit; does not delete the habit document. */
+export async function clearHabitCompletionsForHabit(uid, habitId) {
+  await deleteAllCompletionsForHabit(uid, habitId);
+}
+
 export async function deleteHabit(uid, habitId) {
+  await deleteAllCompletionsForHabit(uid, habitId);
   await deleteDoc(habitRef(uid, habitId));
 }
 

@@ -254,7 +254,7 @@ function buildServingsForMyFood(food) {
     displayLabel: isGramUnit
       ? `${amount} g`
       : gramsEq && gramsEq > 0
-        ? formatServingLabel(desc, gramsEq, 'g', false)
+        ? formatServingLabel(desc, gramsEq, 'g')
         : desc,
   };
 

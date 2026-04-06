@@ -170,6 +170,7 @@ export default function NutritionScreen() {
                 initialMealType={searchMealType}
                 onFoodLogged={handleFoodLogged}
                 addEntry={foodLog.addEntry}
+                addManualEntry={foodLog.addManualEntry}
                 logDateKey={dateKey}
               />
             )}

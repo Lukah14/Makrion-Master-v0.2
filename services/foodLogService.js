@@ -68,6 +68,63 @@ export function buildLogEntry({
   };
 }
 
+/**
+ * Manual log entry: direct nutrientsSnapshot only (no serving / per-100g math).
+ * @param {Object} p
+ * @param {string} p.dateKey - YYYY-MM-DD (mirrors path segment)
+ * @param {string} p.name
+ * @param {string} p.mealType - breakfast | lunch | dinner | snack
+ * @param {Object} p.nutrientsSnapshot - kcal, protein, carbs, fat required; fiber, sugars, sodium optional
+ */
+export function buildManualLogEntry({
+  dateKey,
+  name,
+  mealType,
+  nutrientsSnapshot,
+  status = 'logged',
+  note = '',
+}) {
+  const n = nutrientsSnapshot || {};
+  const snap = {
+    kcal: round0(n.kcal ?? 0),
+    protein: round1(n.protein ?? 0),
+    carbs: round1(n.carbs ?? 0),
+    fat: round1(n.fat ?? 0),
+    fiber: round1(n.fiber ?? 0),
+    sugars: round1(n.sugars ?? 0),
+    sodium: round1(n.sodium ?? 0),
+    saturatedFat: round1(n.saturatedFat ?? 0),
+    transFat: round1(n.transFat ?? 0),
+  };
+  return {
+    source: 'manual',
+    type: 'manual',
+    amountType: 'manual',
+    foodId: null,
+    mealType,
+    dateKey,
+    nameSnapshot: name,
+    brandSnapshot: null,
+    grams: null,
+    servings: null,
+    servingGrams: null,
+    servingLabel: null,
+    nutrientsSnapshot: snap,
+    status,
+    note,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+}
+
+/** @param {object} entry */
+export function isManualFoodLogEntry(entry) {
+  if (!entry) return false;
+  if (entry.source === 'manual' || entry.amountType === 'manual') return true;
+  const id = entry.foodId;
+  return id != null && String(id).startsWith('manual_');
+}
+
 // ─── Collection references ─────────────────────────────────────────────────────
 
 function entriesRef(uid, date) {
@@ -115,8 +172,12 @@ export function subscribeFoodLogEntries(uid, date, onNext, onError) {
 
 export async function updateFoodLogEntry(uid, date, entryId, changes) {
   const update = { ...changes, updatedAt: serverTimestamp() };
-  if (changes.grams !== undefined && changes.per100g !== undefined) {
+  const hasGramsAndPer100 =
+    changes.grams !== undefined && changes.per100g !== undefined;
+  if (hasGramsAndPer100) {
     update.nutrientsSnapshot = calcNutrients(changes.per100g, changes.grams);
+    delete update.per100g;
+  } else if (changes.nutrientsSnapshot !== undefined) {
     delete update.per100g;
   }
   await updateDoc(entryRef(uid, date, entryId), update);

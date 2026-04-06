@@ -15,7 +15,7 @@ const BORDER_LIGHT = '#E8E8E8';
  * @param {number} props.monthIndex 0-11
  * @param {string} props.selectedDateKey YYYY-MM-DD
  * @param {(dateKey: string) => void} [props.onSelectDay]
- * @param {Record<string, { hasTrackedData?: boolean, hasMoment?: boolean, completionRing?: 'full' | 'partial' }>} [props.monthMeta]
+ * @param {Record<string, { hasTrackedData?: boolean, hasMoment?: boolean, completionRing?: 'full' | 'partial', valueBadge?: string }>} [props.monthMeta]
  * @param {boolean} [props.loading]
  * @param {() => void} props.onPrevMonth
  * @param {() => void} props.onNextMonth
@@ -89,6 +89,7 @@ export default function MonthlyCalendar({
         {cells.map((cell) => {
           const meta = monthMeta[cell.dateKey] || {};
           const ring = meta.completionRing;
+          const valueBadge = meta.valueBadge;
           const tracked =
             !!meta.hasTrackedData || ring === 'full' || ring === 'partial';
           const dot = !!meta.hasMoment;
@@ -155,6 +156,14 @@ export default function MonthlyCalendar({
                 <Text style={[styles.dayNum, { color: labelColor, fontSize: circle > 40 ? 17 : 15 }]}>
                   {cell.day}
                 </Text>
+                {valueBadge && !overflow ? (
+                  <Text
+                    style={[styles.valueBadge, { color: CALENDAR_TRACKED_GREEN }]}
+                    numberOfLines={1}
+                  >
+                    {valueBadge}
+                  </Text>
+                ) : null}
                 {dot && !overflow ? <View style={[styles.dot, { backgroundColor: textPrimary }]} /> : null}
               </View>
             </TouchableOpacity>
@@ -228,6 +237,15 @@ const styles = StyleSheet.create({
   },
   dayNum: {
     fontFamily: 'PlusJakartaSans-SemiBold',
+  },
+  valueBadge: {
+    position: 'absolute',
+    bottom: 2,
+    left: 0,
+    right: 0,
+    fontSize: 9,
+    fontFamily: 'PlusJakartaSans-SemiBold',
+    textAlign: 'center',
   },
   dot: {
     position: 'absolute',

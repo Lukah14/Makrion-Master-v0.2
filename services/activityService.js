@@ -19,7 +19,7 @@ import { db, auth } from '@/lib/firebase';
 import { devLogFirestore, formatFirestoreError } from '@/lib/firestoreDebug';
 import { waitForAuthUser } from '@/lib/waitForAuthUser';
 import { estimateCaloriesBurnedFromKcalPerHour80kg } from '@/lib/caloriesBurned';
-import { getUserProfile } from '@/services/profileService';
+import { resolveActivityUserWeightKg } from '@/lib/activityUserWeight';
 
 function logActivityError(context, e) {
   const code = e?.code ?? '';
@@ -46,21 +46,37 @@ function createdAtMillis(data) {
   return 0;
 }
 
-async function resolveUserWeightKg(uid) {
-  try {
-    const profile = await getUserProfile(uid);
-    const w = profile?.body?.currentWeightKg;
-    if (w != null && Number(w) > 0) return Number(w);
-  } catch {
-    /* profile missing or rules */
-  }
-  return 80;
-}
-
 function numOrNull(v) {
   if (v === '' || v == null) return null;
   const n = typeof v === 'number' ? v : parseFloat(String(v).replace(',', '.'));
   return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Activity rows with missing/blank name or literal string "null" should not be shown in the UI.
+ */
+export function isActivityEntryVisible(entry) {
+  if (!entry) return false;
+  const n = entry.name;
+  if (n == null) return false;
+  const s = String(n).trim();
+  if (!s) return false;
+  if (s.toLowerCase() === 'null') return false;
+  return true;
+}
+
+export function filterVisibleActivityEntries(entries) {
+  if (!Array.isArray(entries)) return [];
+  return entries.filter(isActivityEntryVisible);
+}
+
+function isLibrarySource(input) {
+  const s = input?.source;
+  return s === 'exercise_library' || s === 'firestore';
+}
+
+function isLibraryPayload(row) {
+  return row.source === 'exercise_library' && row.exerciseId != null && String(row.exerciseId).length > 0;
 }
 
 /**
@@ -69,37 +85,25 @@ function numOrNull(v) {
  * @param {Object} input validated values + metadata
  */
 export function toActivityFirestorePayload(uid, dateKey, input) {
-  const fromCatalog =
-    input.source === 'firestore' && input.exerciseId != null && String(input.exerciseId).length > 0;
-  const source = fromCatalog ? 'firestore' : 'manual';
+  const fromLibrary =
+    isLibrarySource(input) && input.exerciseId != null && String(input.exerciseId).length > 0;
+  const source = fromLibrary ? 'exercise_library' : 'manual';
 
   return {
     userId: uid,
     date: dateKey,
-    type: input.type,
+    type: 'time',
     name: input.name,
     durationMinutes: input.durationMinutes ?? null,
-    distanceKm: input.distanceKm ?? null,
-    repsPerSet: input.repsPerSet ?? null,
-    sets: input.sets ?? null,
     source,
-    exerciseId: fromCatalog ? String(input.exerciseId) : null,
-    typeOfExercise: input.typeOfExercise ?? null,
-    intensity: input.intensity ?? null,
-    met: numOrNull(input.met),
-    kcalsPerHour80kg: numOrNull(input.kcalsPerHour80kg),
-    category: input.category ?? null,
-    shortInstructions: input.shortInstructions ?? null,
+    exerciseId: fromLibrary ? String(input.exerciseId) : null,
+    category: fromLibrary ? input.category ?? null : null,
+    shortInstructions: fromLibrary ? input.shortInstructions ?? null : null,
+    kcalsPerHour80kg: fromLibrary ? numOrNull(input.kcalsPerHour80kg) : null,
+    typeOfExercise: fromLibrary ? input.typeOfExercise ?? null : null,
+    intensity: fromLibrary ? input.intensity ?? null : null,
+    met: fromLibrary ? numOrNull(input.met) : null,
   };
-}
-
-function attachCaloriesBurned(payload, userWeightKg) {
-  const caloriesBurned = estimateCaloriesBurnedFromKcalPerHour80kg({
-    kcalsPerHour80kg: payload.kcalsPerHour80kg,
-    durationMinutes: payload.durationMinutes,
-    userWeightKg,
-  });
-  return { ...payload, caloriesBurned: caloriesBurned ?? null };
 }
 
 export async function addActivityEntry(uid, dateKey, data) {
@@ -118,11 +122,20 @@ export async function addActivityEntry(uid, dateKey, data) {
     dateKey,
     name: data?.name,
   });
-  const userWeightKg = await resolveUserWeightKg(uid);
+  const userWeightKg = await resolveActivityUserWeightKg(uid);
   const base = toActivityFirestorePayload(uid, dateKey, data);
-  const withCalories = attachCaloriesBurned(base, userWeightKg);
+  let caloriesBurned = numOrNull(data.caloriesBurned);
+  if (caloriesBurned == null && isLibraryPayload(base)) {
+    caloriesBurned = estimateCaloriesBurnedFromKcalPerHour80kg({
+      kcalsPerHour80kg: base.kcalsPerHour80kg,
+      durationMinutes: base.durationMinutes,
+      userWeightKg,
+    });
+  }
   const payload = {
-    ...withCalories,
+    ...base,
+    caloriesBurned: caloriesBurned ?? null,
+    weightUsedKg: isLibraryPayload(base) ? userWeightKg : null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
@@ -142,6 +155,42 @@ export async function getActivityEntry(uid, entryId) {
   return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
 
+/**
+ * All activities with date in [startKey, endKey] (inclusive), YYYY-MM-DD order.
+ * @param {string} uid
+ * @param {string} startKey
+ * @param {string} endKey
+ */
+export async function listActivityEntriesInRange(uid, startKey, endKey) {
+  if (!uid) return [];
+  const authUid = await waitForAuthUser();
+  if (authUid !== uid) {
+    const msg = `Activity range list blocked: Auth uid (${authUid}) does not match requested uid (${uid}).`;
+    console.warn('[Activity]', msg);
+    throw new Error(msg);
+  }
+  try {
+    const q = query(
+      activitiesRef(uid),
+      where('date', '>=', startKey),
+      where('date', '<=', endKey),
+    );
+    const snap = await getDocs(q);
+    const rows = filterVisibleActivityEntries(
+      snap.docs.map((d) => ({ id: d.id, ...d.data() })),
+    );
+    rows.sort((a, b) => {
+      const da = String(a.date || '').localeCompare(String(b.date || ''));
+      if (da !== 0) return da;
+      return createdAtMillis(a) - createdAtMillis(b);
+    });
+    return rows;
+  } catch (e) {
+    logActivityError('listInRange', e);
+    throw new Error(formatFirestoreError(e));
+  }
+}
+
 export async function listActivityEntries(uid, dateKey) {
   if (!uid) return [];
   const authUid = await waitForAuthUser();
@@ -159,7 +208,9 @@ export async function listActivityEntries(uid, dateKey) {
   try {
     const q = query(activitiesRef(uid), where('date', '==', dateKey));
     const snap = await getDocs(q);
-    const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const rows = filterVisibleActivityEntries(
+      snap.docs.map((d) => ({ id: d.id, ...d.data() })),
+    );
     rows.sort((a, b) => createdAtMillis(a) - createdAtMillis(b));
     return rows;
   } catch (e) {
@@ -173,9 +224,7 @@ const ALLOWED_UPDATE = [
   'type',
   'name',
   'durationMinutes',
-  'distanceKm',
-  'repsPerSet',
-  'sets',
+  'caloriesBurned',
   'source',
   'exerciseId',
   'category',
@@ -184,6 +233,7 @@ const ALLOWED_UPDATE = [
   'intensity',
   'met',
   'kcalsPerHour80kg',
+  'weightUsedKg',
 ];
 
 export async function updateActivityEntry(uid, _dateKey, entryId, changes) {
@@ -197,20 +247,7 @@ export async function updateActivityEntry(uid, _dateKey, entryId, changes) {
   const snap = await getDoc(activityDocRef(uid, entryId));
   if (!snap.exists()) throw new Error('Activity entry not found.');
 
-  const prev = snap.data();
-  const merged = { ...prev };
-  for (const k of ALLOWED_UPDATE) {
-    if (Object.prototype.hasOwnProperty.call(changes, k) && changes[k] !== undefined) {
-      merged[k] = changes[k];
-    }
-  }
-  const userWeightKg = await resolveUserWeightKg(uid);
-  const caloriesBurned = estimateCaloriesBurnedFromKcalPerHour80kg({
-    kcalsPerHour80kg: merged.kcalsPerHour80kg,
-    durationMinutes: merged.durationMinutes,
-    userWeightKg,
-  });
-  const patch = { updatedAt: serverTimestamp(), caloriesBurned: caloriesBurned ?? null };
+  const patch = { updatedAt: serverTimestamp() };
   for (const k of ALLOWED_UPDATE) {
     if (Object.prototype.hasOwnProperty.call(changes, k) && changes[k] !== undefined) {
       patch[k] = changes[k];

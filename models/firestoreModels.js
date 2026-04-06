@@ -84,6 +84,50 @@
  * @property {import('firebase/firestore').Timestamp} lastRecalculatedAt
  * @property {import('firebase/firestore').Timestamp} createdAt
  * @property {import('firebase/firestore').Timestamp} updatedAt
+ * @property {number} [steps]  Legacy manual steps; prefer users/{uid}/dailySteps/{dateKey}.
+ */
+
+/**
+ * users/{uid}/dailySteps/{dateKey} — manual step count for one calendar day (doc id = dateKey).
+ * @typedef {Object} UserDailySteps
+ * @property {string} userId
+ * @property {string} dateKey
+ * @property {number} steps
+ * @property {import('firebase/firestore').Timestamp} [createdAt]
+ * @property {import('firebase/firestore').Timestamp} [updatedAt]
+ */
+
+// ─── UserFoodLogEntry (Nutrition tab / legacy path) ───────────────────────────
+
+/**
+ * users/{uid}/foodLogs/{dateKey}/entries/{entryId}
+ * Day is encoded in the path; optional `dateKey` on the doc mirrors it.
+ *
+ * **Manual (direct nutrition):** `source: "manual"`, `amountType: "manual"`, `type: "manual"`,
+ * `foodId: null`, `grams` / `servings` / `servingGrams` / `servingLabel` null — `nutrientsSnapshot`
+ * holds totals (kcal, protein, carbs, fat; optional fiber, sugars, sodium, etc.).
+ *
+ * **Database / recipe:** `type` "food" or "recipe", `grams` & scaled `nutrientsSnapshot` from per-100g math.
+ *
+ * @typedef {Object} UserFoodLogEntry
+ * @property {string} id
+ * @property {string|null} [foodId]
+ * @property {string} type - "food" | "recipe" | "manual"
+ * @property {string} [source] - e.g. "manual"
+ * @property {string} [amountType] - e.g. "manual"
+ * @property {string} mealType - "breakfast" | "lunch" | "dinner" | "snack"
+ * @property {string} [dateKey]
+ * @property {string} nameSnapshot
+ * @property {string|null} [brandSnapshot]
+ * @property {number|null} [grams]
+ * @property {number|null} [servings]
+ * @property {number|null} [servingGrams]
+ * @property {string|null} [servingLabel]
+ * @property {NutrientsSnapshot} nutrientsSnapshot
+ * @property {string} [status] - "logged" | "planned"
+ * @property {string|null} [note]
+ * @property {import('firebase/firestore').Timestamp} [createdAt]
+ * @property {import('firebase/firestore').Timestamp} [updatedAt]
  */
 
 // ─── FoodEntry ────────────────────────────────────────────────────────────────
@@ -280,21 +324,22 @@
  * @property {string}  id
  * @property {string}  userId
  * @property {string}  date           - YYYY-MM-DD
- * @property {string}  type           - "time" | "distance" | "reps" (legacy: strength, cardio, mixed)
- * @property {string}  source         - "manual" | "firestore"
+ * @property {string}  [type]         - "time" (legacy: distance, reps, strength, cardio, mixed)
+ * @property {string}  source         - "manual" | "exercise_library" (legacy: "firestore")
  * @property {string|null} exerciseId
  * @property {'Cardiovascular'|'Strength'|null} [typeOfExercise]
  * @property {'Light'|'Moderate'|'Strenuous'|null} [intensity]
  * @property {number|null} [met]
  * @property {number|null} [kcalsPerHour80kg]
  * @property {number|null} [caloriesBurned]
+ * @property {number|null} [weightUsedKg] - user weight (kg) snapshot for library kcal scaling
  * @property {string|null} category
  * @property {string|null} shortInstructions
  * @property {string}  name
  * @property {number|null} durationMinutes
- * @property {number|null} distanceKm
- * @property {number|null} repsPerSet
- * @property {number|null} sets
+ * @property {number|null} [distanceKm] legacy
+ * @property {number|null} [repsPerSet] legacy
+ * @property {number|null} [sets] legacy
  * @property {import('firebase/firestore').Timestamp} createdAt
  * @property {import('firebase/firestore').Timestamp} updatedAt
  */
@@ -306,7 +351,9 @@
  * @typedef {Object} WeightEntry
  * @property {string}  id
  * @property {string}  uid
+ * @property {string}  [userId]  mirror of uid
  * @property {string}  dateKey
+ * @property {string}  [date]  YYYY-MM-DD (same as dateKey)
  * @property {number}  weightKg
  * @property {number|null} bodyFatPct
  * @property {string|null} note
@@ -315,21 +362,38 @@
  * @property {import('firebase/firestore').Timestamp} updatedAt
  */
 
-// ─── MemorableMoment ──────────────────────────────────────────────────────────
+// ─── MemorableMoment (daily note) ─────────────────────────────────────────────
 
 /**
- * profiles/{uid}/memorable_moments/{momentId}
+ * Normalized shape for UI — one entry per calendar day.
+ * @typedef {Object} DailyMemorableMoment
+ * @property {string} id - same as dateKey (YYYY-MM-DD)
+ * @property {string} dateKey
+ * @property {string} text
+ * @property {number|null} moodRating
+ * @property {string|null} photoUrl
+ * @property {string|null} emoji
+ */
+
+/**
+ * profiles/{uid}/memorable_moments/{dateKey}
+ * Document id is YYYY-MM-DD for the canonical daily note (upsert target).
+ * Legacy random ids may exist until migrated on save.
+ *
  * @typedef {Object} MemorableMoment
- * @property {string}  id
  * @property {string}  uid
+ * @property {string}  userId
  * @property {string}  dateKey
- * @property {string}  type        - "text" | "photo" | "emoji" | "achievement"
- * @property {string|null}  text
- * @property {string|null}  emoji
- * @property {string|null}  photoUrl
- * @property {string|null}  achievementTag
- * @property {string|null}  moodTag
- * @property {number|null}  moodRating   - 1–10, optional
+ * @property {string}  date - YYYY-MM-DD (mirror)
+ * @property {string}  type - "daily" | legacy "text" | "photo" | …
+ * @property {string|null} note
+ * @property {string|null} text
+ * @property {string|null} emoji
+ * @property {string|null} photoUrl
+ * @property {number|null} moodScore
+ * @property {number|null} moodRating
+ * @property {string|null} achievementTag
+ * @property {string|null} moodTag
  * @property {import('firebase/firestore').Timestamp|null} happenedAt
  * @property {import('firebase/firestore').Timestamp} createdAt
  * @property {import('firebase/firestore').Timestamp} updatedAt

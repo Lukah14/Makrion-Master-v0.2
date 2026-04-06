@@ -1,13 +1,12 @@
 import { View, StyleSheet } from 'react-native';
 import TodayProgressCard from './TodayProgressCard';
 import HabitList from './HabitList';
-import MemorableMomentsSection from './MemorableMomentsSection';
 
+/** Habits-only stack for the Today subpage. Memorable Moments is rendered separately in `habits.jsx`. */
 export default function TodayView({
   dateKey,
   todayKey,
   habits,
-  moments,
   onToggle,
   onIncrement,
   onDecrement,
@@ -20,9 +19,6 @@ export default function TodayView({
   onTimerReset,
   onHabitLongPress,
   onAddHabit,
-  onSaveMoment,
-  onUpdateMoment,
-  onDeleteMoment,
   runningTimers,
 }) {
   return (
@@ -43,13 +39,6 @@ export default function TodayView({
         onLongPress={onHabitLongPress}
         onAddHabit={onAddHabit}
         runningTimers={runningTimers}
-      />
-
-      <MemorableMomentsSection
-        moments={moments}
-        onSaveMoment={onSaveMoment}
-        onUpdateMoment={onUpdateMoment}
-        onDeleteMoment={onDeleteMoment}
       />
     </View>
   );

@@ -1,24 +1,15 @@
-import { useState, useEffect } from 'react';
-import { View, Text, Image, TouchableOpacity, Modal, Pressable, StyleSheet } from 'react-native';
+import { useState } from 'react';
+import {
+  View, Text, Image, TouchableOpacity, Modal, Pressable, StyleSheet,
+  ActivityIndicator, Alert,
+} from 'react-native';
 import { Plus, Flame, Trash2, Pencil } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import { num } from '@/lib/num';
 
 const ICON_MORE = require('@/src/Icons/More.png');
 
-function MacroStat({ label, value, color }) {
-  const { colors: Colors } = useTheme();
-  const s = createS(Colors);
-
-  return (
-    <View style={s.macroStat}>
-      <Text style={[s.macroValue, color && { color }]}>{value}</Text>
-      <Text style={s.macroLabel}>{label}</Text>
-    </View>
-  );
-}
-
-function FoodRow({ item, onRemove }) {
+function FoodRow({ item, onRemove, onEdit }) {
   const { colors: Colors } = useTheme();
   const s = createS(Colors);
 
@@ -45,7 +36,10 @@ function FoodRow({ item, onRemove }) {
             <Text style={s.fVal}>{f}</Text>
           </Text>
         </View>
-        <TouchableOpacity onPress={() => onRemove && onRemove(item.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} activeOpacity={0.7}>
+        <TouchableOpacity onPress={() => onEdit?.(item)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} activeOpacity={0.7}>
+          <Pencil size={13} color={Colors.textTertiary} />
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => onRemove?.(item.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} activeOpacity={0.7}>
           <Trash2 size={13} color={Colors.textTertiary} />
         </TouchableOpacity>
       </View>
@@ -53,7 +47,9 @@ function FoodRow({ item, onRemove }) {
   );
 }
 
-function MealOverflowMenu({ visible, onClose, onAddFood, onClearMeal, onEditMeal, mealName }) {
+function MealOverflowMenu({
+  visible, onClose, onAddFood, onClearMeal, mealName, mealHasItems,
+}) {
   const { colors: Colors } = useTheme();
   const s = createS(Colors);
 
@@ -67,39 +63,43 @@ function MealOverflowMenu({ visible, onClose, onAddFood, onClearMeal, onEditMeal
             <Plus size={15} color={Colors.textPrimary} />
             <Text style={s.menuText}>Add food</Text>
           </TouchableOpacity>
-          <View style={s.menuDivider} />
-          <TouchableOpacity style={s.menuItem} onPress={onEditMeal} activeOpacity={0.7}>
-            <Pencil size={15} color={Colors.textPrimary} />
-            <Text style={s.menuText}>Edit meal</Text>
-          </TouchableOpacity>
-          <View style={s.menuDivider} />
-          <TouchableOpacity style={s.menuItem} onPress={onClearMeal} activeOpacity={0.7}>
-            <Trash2 size={15} color='#FF5555' />
-            <Text style={[s.menuText, { color: '#FF5555' }]}>Clear meal</Text>
-          </TouchableOpacity>
+          {mealHasItems ? (
+            <>
+              <View style={s.menuDivider} />
+              <TouchableOpacity style={s.menuItem} onPress={onClearMeal} activeOpacity={0.7}>
+                <Trash2 size={15} color="#FF5555" />
+                <Text style={[s.menuText, { color: '#FF5555' }]}>Clear meal</Text>
+              </TouchableOpacity>
+            </>
+          ) : null}
         </Pressable>
       </Pressable>
     </Modal>
   );
 }
 
-function MealCard({ meal, onAddFood }) {
+function MealCard({ meal, onAddFood, onDeleteEntry, onEditEntry, onClearMeal }) {
   const { colors: Colors } = useTheme();
   const s = createS(Colors);
   const [menuVisible, setMenuVisible] = useState(false);
-  const [items, setItems] = useState(meal.items || []);
-
-  useEffect(() => {
-    setItems(meal.items || []);
-  }, [meal.items]);
+  const items = meal.items || [];
 
   const totalCal = items.reduce((a, i) => a + num(i.calories), 0);
   const protein = Math.round(items.reduce((a, i) => a + num(i.protein), 0) * 10) / 10;
   const carbs = Math.round(items.reduce((a, i) => a + num(i.carbs), 0) * 10) / 10;
   const fat = Math.round(items.reduce((a, i) => a + num(i.fat), 0) * 10) / 10;
 
-  const removeItem = (id) => setItems((prev) => prev.filter((i) => i.id !== id));
-  const clearMeal = () => setItems([]);
+  const confirmClear = () => {
+    setMenuVisible(false);
+    Alert.alert(
+      'Clear meal',
+      `Remove all items from ${meal.type}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Clear', style: 'destructive', onPress: () => onClearMeal?.(meal.id) },
+      ],
+    );
+  };
 
   return (
     <View style={s.card}>
@@ -135,7 +135,7 @@ function MealCard({ meal, onAddFood }) {
             {items.map((item, idx) => (
               <View key={item.id}>
                 {idx > 0 && <View style={s.foodDivider} />}
-                <FoodRow item={item} onRemove={removeItem} />
+                <FoodRow item={item} onRemove={onDeleteEntry} onEdit={onEditEntry} />
               </View>
             ))}
           </View>
@@ -153,23 +153,86 @@ function MealCard({ meal, onAddFood }) {
       <MealOverflowMenu
         visible={menuVisible}
         mealName={meal.type}
+        mealHasItems={items.length > 0}
         onClose={() => setMenuVisible(false)}
         onAddFood={() => { setMenuVisible(false); onAddFood && onAddFood(meal); }}
-        onClearMeal={() => { setMenuVisible(false); clearMeal(); }}
-        onEditMeal={() => setMenuVisible(false)}
+        onClearMeal={confirmClear}
       />
     </View>
   );
 }
 
-export default function MealLog({ meals, onAddFood }) {
+/**
+ * @param {{
+ *   meals: { id: string, type: string, emoji?: string, items: any[] }[],
+ *   loading?: boolean,
+ *   error?: string|null,
+ *   onAddFood: (meal: { id: string }) => void,
+ *   onDeleteEntry: (entryId: string) => void,
+ *   onEditEntry: (item: any) => void,
+ *   onClearMeal: (mealTypeKey: string) => void,
+ * }} props
+ */
+export default function MealLog({
+  meals,
+  loading,
+  error,
+  onAddFood,
+  onDeleteEntry,
+  onEditEntry,
+  onClearMeal,
+}) {
   const { colors: Colors } = useTheme();
   const s = createS(Colors);
+
+  if (loading) {
+    return (
+      <View style={s.stateBox}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+        <Text style={s.stateText}>Loading food log…</Text>
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={s.stateBox}>
+        <Text style={s.errorTitle}>Could not load food log</Text>
+        <Text style={s.errorSub}>{error}</Text>
+      </View>
+    );
+  }
+
+  const anyItems = meals.some((m) => (m.items || []).length > 0);
+  if (!anyItems) {
+    return (
+      <View style={s.container}>
+        <Text style={s.emptyBanner}>No foods logged for this day. Add a meal below.</Text>
+        {meals.map((meal) => (
+          <MealCard
+            key={meal.id}
+            meal={meal}
+            onAddFood={onAddFood}
+            onDeleteEntry={onDeleteEntry}
+            onEditEntry={onEditEntry}
+            onClearMeal={onClearMeal}
+          />
+        ))}
+      </View>
+    );
+  }
 
   return (
     <View style={s.container}>
       {meals.map((meal) => (
-        <MealCard key={meal.id} meal={meal} onAddFood={onAddFood} />
+        <MealCard
+          key={meal.id}
+          meal={meal}
+          onAddFood={onAddFood}
+          onDeleteEntry={onDeleteEntry}
+          onEditEntry={onEditEntry}
+          onClearMeal={onClearMeal}
+        />
       ))}
     </View>
   );
@@ -179,6 +242,34 @@ const createS = (Colors) => StyleSheet.create({
   container: {
     gap: 14,
     paddingBottom: 8,
+  },
+  stateBox: {
+    paddingVertical: 28,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    gap: 10,
+  },
+  stateText: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    fontFamily: 'PlusJakartaSans-Medium',
+  },
+  errorTitle: {
+    fontSize: 15,
+    fontFamily: 'PlusJakartaSans-SemiBold',
+    color: Colors.textPrimary,
+  },
+  errorSub: {
+    fontSize: 12,
+    color: Colors.textTertiary,
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  emptyBanner: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: 4,
   },
   card: {
     borderRadius: 24,
@@ -348,18 +439,5 @@ const createS = (Colors) => StyleSheet.create({
     fontSize: 14,
     fontFamily: 'PlusJakartaSans-SemiBold',
     color: Colors.textPrimary,
-  },
-  macroStat: {
-    alignItems: 'center',
-  },
-  macroValue: {
-    fontSize: 16,
-    fontFamily: 'PlusJakartaSans-Bold',
-    color: Colors.textPrimary,
-  },
-  macroLabel: {
-    fontSize: 11,
-    color: Colors.textSecondary,
-    marginTop: 2,
   },
 });

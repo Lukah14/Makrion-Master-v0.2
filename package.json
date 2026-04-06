@@ -5,6 +5,8 @@
   "private": true,
   "scripts": {
     "dev": "EXPO_NO_TELEMETRY=1 expo start",
+    "dev:online": "EXPO_NO_TELEMETRY=1 expo start",
+    "dev:offline": "EXPO_NO_TELEMETRY=1 expo start --offline",
     "build:web": "expo export --platform web",
     "lint": "expo lint",
     "seed:exercises": "node scripts/seed-exercises.mjs",

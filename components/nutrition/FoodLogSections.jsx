@@ -7,7 +7,9 @@ import { Plus, Pencil, Trash2, ArrowRightLeft } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import Card from '@/components/common/Card';
 import { num } from '@/lib/num';
+import { isManualFoodLogEntry } from '@/services/foodLogService';
 import EditEntrySheet from './EditEntrySheet';
+import EditManualEntrySheet from './EditManualEntrySheet';
 
 const MEAL_ORDER = ['breakfast', 'lunch', 'dinner', 'snack'];
 const MEAL_LABELS = {
@@ -38,6 +40,7 @@ export default function FoodLogSections({
 
   const [menuEntry, setMenuEntry] = useState(null);
   const [editEntry, setEditEntry] = useState(null);
+  const [editManualEntry, setEditManualEntry] = useState(null);
   const [moveEntry, setMoveEntry] = useState(null);
 
   const mealGroups = {};
@@ -81,6 +84,18 @@ export default function FoodLogSections({
 
   const handleEditSave = (entryId, changes) => {
     onEditEntry(entryId, changes);
+  };
+
+  const entryDetailSubtitle = (entry) => {
+    const manual = isManualFoodLogEntry(entry);
+    const gramsPart =
+      !manual && entry.grams != null && entry.grams !== ''
+        ? `${num(entry.grams)}g`
+        : null;
+    const brandPart = entry.brandSnapshot ? String(entry.brandSnapshot) : null;
+    const parts = [gramsPart, brandPart].filter(Boolean);
+    if (parts.length > 0) return parts.join(' · ');
+    return manual ? 'Manual entry' : '—';
   };
 
   const handleMove = (entry, newMealType) => {
@@ -160,12 +175,7 @@ export default function FoodLogSections({
                       <Text style={s.entryName} numberOfLines={1}>
                         {entry.nameSnapshot || 'Food'}
                       </Text>
-                      <Text style={s.entryDetail}>
-                        {entry.grams != null && entry.grams !== ''
-                          ? `${num(entry.grams)}g`
-                          : '—'}
-                        {entry.brandSnapshot ? ` · ${entry.brandSnapshot}` : ''}
-                      </Text>
+                      <Text style={s.entryDetail}>{entryDetailSubtitle(entry)}</Text>
                     </View>
                     <View style={s.entryRight}>
                       <Text style={s.entryCal}>
@@ -209,7 +219,9 @@ export default function FoodLogSections({
             </Text>
             <Text style={s.menuSubtitle}>
               {[
-                menuEntry?.grams != null && menuEntry?.grams !== ''
+                !isManualFoodLogEntry(menuEntry) &&
+                menuEntry?.grams != null &&
+                menuEntry?.grams !== ''
                   ? `${num(menuEntry.grams)}g`
                   : null,
                 `${Math.round(num(menuEntry?.nutrientsSnapshot?.kcal))} kcal`,
@@ -222,12 +234,16 @@ export default function FoodLogSections({
               style={s.menuOption}
               activeOpacity={0.7}
               onPress={() => {
+                const e = menuEntry;
                 setMenuEntry(null);
-                setEditEntry(menuEntry);
+                if (isManualFoodLogEntry(e)) setEditManualEntry(e);
+                else setEditEntry(e);
               }}
             >
               <Pencil size={18} color={Colors.textPrimary} />
-              <Text style={s.menuOptionText}>Edit Amount</Text>
+              <Text style={s.menuOptionText}>
+                {isManualFoodLogEntry(menuEntry) ? 'Edit' : 'Edit amount'}
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -295,12 +311,18 @@ export default function FoodLogSections({
         </Pressable>
       </Modal>
 
-      {/* Edit entry sheet */}
       <EditEntrySheet
         visible={!!editEntry}
         entry={editEntry}
         onSave={handleEditSave}
         onClose={() => setEditEntry(null)}
+      />
+
+      <EditManualEntrySheet
+        visible={!!editManualEntry}
+        entry={editManualEntry}
+        onSave={handleEditSave}
+        onClose={() => setEditManualEntry(null)}
       />
     </View>
   );

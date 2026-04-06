@@ -99,8 +99,18 @@ service cloud.firestore {
         allow read, write: if isOwner(uid);
       }
 
+      // Daily steps (manual entry per calendar day; doc id = YYYY-MM-DD)
+      match /dailySteps/{dateKey} {
+        allow read, write: if isOwner(uid);
+      }
+
       // Progress entries
       match /progressEntries/{entryId} {
+        allow read, write: if isOwner(uid);
+      }
+
+      // Health / onboarding profile (single doc id e.g. "main")
+      match /profile/{profileDocId} {
         allow read, write: if isOwner(uid);
       }
     }
@@ -122,6 +132,7 @@ service cloud.firestore {
       match /activities/{id}             { allow read, write: if isOwner(uid); }
       match /weight_entries/{id}         { allow read, write: if isOwner(uid); }
       match /memorable_moments/{id}      { allow read, write: if isOwner(uid); }
+      // Legacy: `steps` may still exist on daily_logs from older clients; prefer users/{uid}/dailySteps/{dateKey}.
     }
 
     // ─── Coach-client relation (future expansion) ─────────────────────────────

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Modal,
   View,
@@ -15,21 +15,19 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { X, Pencil, Search } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
+import { useAuth } from '@/context/AuthContext';
 import { Layout } from '@/constants/layout';
-import ActivityTypeSelector from '@/components/activity/ActivityTypeSelector';
 import FirestoreExercisePickerModal from '@/components/activity/FirestoreExercisePickerModal';
-import { validateActivityForm } from '@/lib/activityValidation';
-import { editorTypeFromEntry } from '@/lib/activityTypes';
+import { validateSimpleActivityForm } from '@/lib/activityValidation';
 import { snapshotFromExerciseDefinition } from '@/lib/activityLogMapping';
+import { estimateCaloriesBurnedFromKcalPerHour80kg } from '@/lib/caloriesBurned';
+import { resolveActivityUserWeightKg } from '@/lib/activityUserWeight';
 
-function defaultForm(type = 'time') {
+function defaultForm() {
   return {
-    type,
     name: '',
     durationMinutes: '',
-    distanceKm: '',
-    sets: '',
-    repsPerSet: '',
+    caloriesBurned: '',
     source: 'manual',
     exerciseId: '',
     category: '',
@@ -41,32 +39,19 @@ function defaultForm(type = 'time') {
   };
 }
 
-function distanceKmFromEntry(entry) {
-  const dk = Number(entry?.distanceKm);
-  if (dk > 0) return String(dk);
-  const dm = Number(entry?.distanceMeters);
-  if (dm > 0) return String(Math.round((dm / 1000) * 1000) / 1000);
-  return '';
-}
-
 function entryToForm(entry) {
-  const type = editorTypeFromEntry(entry);
-  const fromCatalog = entry.source === 'firestore';
+  const fromLibrary = entry.source === 'firestore' || entry.source === 'exercise_library';
   return {
-    type,
     name: entry.name || '',
     durationMinutes: entry.durationMinutes != null ? String(entry.durationMinutes) : '',
-    distanceKm: distanceKmFromEntry(entry),
-    sets: entry.sets != null ? String(entry.sets) : '',
-    repsPerSet:
-      entry.repsPerSet != null
-        ? String(entry.repsPerSet)
-        : (entry.reps != null ? String(entry.reps) : ''),
-    source: fromCatalog ? 'firestore' : 'manual',
-    exerciseId: fromCatalog ? (entry.exerciseId || '') : '',
+    caloriesBurned:
+      entry.caloriesBurned != null && entry.caloriesBurned !== ''
+        ? String(entry.caloriesBurned)
+        : '',
+    source: fromLibrary ? 'exercise_library' : 'manual',
+    exerciseId: fromLibrary ? (entry.exerciseId || '') : '',
     category: entry.category || entry.exerciseCategory || '',
-    shortInstructions:
-      entry.shortInstructions || entry.instructions || '',
+    shortInstructions: entry.shortInstructions || entry.instructions || '',
     typeOfExercise: entry.typeOfExercise || '',
     intensity: entry.intensity || '',
     met: entry.met != null ? String(entry.met) : '',
@@ -81,9 +66,9 @@ function parseOptionalNumber(s) {
 }
 
 function buildMetaPayload(form) {
-  if (form.source === 'firestore' && form.exerciseId) {
+  if (form.source === 'exercise_library' && form.exerciseId) {
     return {
-      source: 'firestore',
+      source: 'exercise_library',
       exerciseId: form.exerciseId,
       category: form.category?.trim() || null,
       shortInstructions: form.shortInstructions?.trim() || null,
@@ -132,27 +117,15 @@ function LabeledInput({
   );
 }
 
-/** Manual duration in minutes: numeric field + visible "min" suffix. */
-function DurationMinutesField({
-  optional,
-  value,
-  onChangeText,
-  placeholder = '30',
-  Colors,
-  styles,
-}) {
+function DurationMinutesField({ value, onChangeText, placeholder = '30', Colors, styles }) {
   const onChange = (t) => {
     const cleaned = t.replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1');
     onChangeText(cleaned);
   };
   return (
     <View style={styles.field}>
-      <Text style={styles.label}>Duration</Text>
-      <Text style={styles.hint}>
-        {optional
-          ? 'Optional — minutes only. Add if you want time on your log (helps calories for library exercises).'
-          : 'Minutes only — type a number (e.g. 15, 30, 45). Unit is always minutes.'}
-      </Text>
+      <Text style={styles.label}>Time (min)</Text>
+      <Text style={styles.hint}>Minutes only — e.g. 15, 30, 45.</Text>
       <View style={styles.durationRow}>
         <TextInput
           style={styles.durationInput}
@@ -180,6 +153,7 @@ export default function AddEditActivityModal({
   onSave,
 }) {
   const { colors: Colors } = useTheme();
+  const { user } = useAuth();
   const styles = createStyles(Colors);
   const isEdit = Boolean(initialEntry?.id);
 
@@ -187,37 +161,86 @@ export default function AddEditActivityModal({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [form, setForm] = useState(() => defaultForm());
   const [saving, setSaving] = useState(false);
+  const [resolvedWeightKg, setResolvedWeightKg] = useState(null);
+  const caloriesUserTouchedRef = useRef(false);
+
+  const weightForFormula = useMemo(() => {
+    if (
+      isEdit &&
+      initialEntry &&
+      (initialEntry.source === 'exercise_library' || initialEntry.source === 'firestore')
+    ) {
+      const w = Number(initialEntry.weightUsedKg);
+      if (Number.isFinite(w) && w > 0) return w;
+    }
+    return resolvedWeightKg;
+  }, [isEdit, initialEntry, resolvedWeightKg]);
 
   useEffect(() => {
     if (!visible) return;
     if (initialEntry?.id) {
       setFlowPhase('form');
       setForm(entryToForm(initialEntry));
+      caloriesUserTouchedRef.current = true;
     } else {
       setFlowPhase('source');
-      setForm(defaultForm('time'));
+      setForm(defaultForm());
+      caloriesUserTouchedRef.current = false;
     }
     setPickerOpen(false);
   }, [visible, initialEntry]);
+
+  useEffect(() => {
+    if (!visible || !user?.uid) {
+      setResolvedWeightKg(null);
+      return;
+    }
+    let cancelled = false;
+    resolveActivityUserWeightKg(user.uid).then((w) => {
+      if (!cancelled) setResolvedWeightKg(w);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, user?.uid]);
+
+  useEffect(() => {
+    if (!visible) return;
+    if (form.source !== 'exercise_library' || !form.exerciseId) return;
+    if (caloriesUserTouchedRef.current) return;
+    const w = weightForFormula;
+    if (w == null || !Number.isFinite(Number(w)) || Number(w) <= 0) return;
+    const mins = parseOptionalNumber(form.durationMinutes);
+    const khr = parseOptionalNumber(form.kcalsPerHour80kg);
+    if (mins == null || mins <= 0 || khr == null || khr <= 0) return;
+    const est = estimateCaloriesBurnedFromKcalPerHour80kg({
+      kcalsPerHour80kg: khr,
+      durationMinutes: mins,
+      userWeightKg: w,
+    });
+    if (est != null) {
+      setForm((prev) => ({ ...prev, caloriesBurned: String(est) }));
+    }
+  }, [
+    visible,
+    form.source,
+    form.exerciseId,
+    form.durationMinutes,
+    form.kcalsPerHour80kg,
+    weightForFormula,
+  ]);
 
   const set = useCallback((key, v) => {
     setForm((prev) => ({ ...prev, [key]: v }));
   }, []);
 
-  const buildRaw = useCallback(
-    () => ({
+  const handleSave = async () => {
+    const raw = {
       name: form.name,
       durationMinutes: form.durationMinutes,
-      distanceKm: form.distanceKm,
-      sets: form.sets,
-      repsPerSet: form.repsPerSet,
-    }),
-    [form],
-  );
-
-  const handleSave = async () => {
-    const raw = { type: form.type, ...buildRaw() };
-    const result = validateActivityForm(form.type, raw);
+      caloriesBurned: form.caloriesBurned,
+    };
+    const result = validateSimpleActivityForm(raw);
     if (!result.ok) {
       Alert.alert('Check fields', result.message);
       return;
@@ -235,21 +258,19 @@ export default function AddEditActivityModal({
 
   const handleExercisePick = useCallback((def) => {
     const snap = snapshotFromExerciseDefinition(def);
+    caloriesUserTouchedRef.current = false;
     setForm((prev) => ({
-      ...prev,
+      ...defaultForm(),
       ...snap,
       durationMinutes: '',
-      distanceKm: '',
-      sets: '',
-      repsPerSet: '',
+      caloriesBurned: '',
     }));
     setFlowPhase('form');
     setPickerOpen(false);
   }, []);
 
-  const type = form.type;
   const sourceChooser = !isEdit && flowPhase === 'source';
-  const lockedType = form.source === 'firestore' && form.exerciseId && form.typeOfExercise === 'Strength';
+  const fromLibrary = form.source === 'exercise_library' && Boolean(form.exerciseId);
 
   return (
     <>
@@ -277,13 +298,13 @@ export default function AddEditActivityModal({
                 >
                   <Text style={styles.sectionLabel}>Choose a path</Text>
                   <Text style={styles.hint}>
-                    Use the exercise library from Firestore, or enter a custom activity manually.
+                    Log from the exercise library (time-based calories) or add a custom activity manually.
                   </Text>
 
                   <TouchableOpacity
                     style={styles.choiceCard}
                     onPress={() => {
-                      setForm(defaultForm('time'));
+                      setForm(defaultForm());
                       setFlowPhase('form');
                     }}
                     activeOpacity={0.75}
@@ -291,7 +312,7 @@ export default function AddEditActivityModal({
                     <Pencil size={22} color={Colors.textPrimary} />
                     <View style={styles.choiceTextWrap}>
                       <Text style={styles.choiceTitle}>Manual</Text>
-                      <Text style={styles.choiceSub}>Type any name and choose time, distance, or reps.</Text>
+                      <Text style={styles.choiceSub}>Name, time in minutes, and calories burned.</Text>
                     </View>
                   </TouchableOpacity>
 
@@ -303,7 +324,9 @@ export default function AddEditActivityModal({
                     <Search size={22} color={Colors.textPrimary} />
                     <View style={styles.choiceTextWrap}>
                       <Text style={styles.choiceTitle}>Exercise library</Text>
-                      <Text style={styles.choiceSub}>Browse MET and kcal/h (80 kg) values, then log duration or reps.</Text>
+                      <Text style={styles.choiceSub}>
+                        Pick an exercise; calories scale to your current weight when you enter time.
+                      </Text>
                     </View>
                   </TouchableOpacity>
                 </ScrollView>
@@ -326,14 +349,14 @@ export default function AddEditActivityModal({
                       style={styles.changePath}
                       onPress={() => {
                         setFlowPhase('source');
-                        setForm(defaultForm('time'));
+                        setForm(defaultForm());
                       }}
                     >
                       <Text style={styles.changePathText}>← Change how I add</Text>
                     </TouchableOpacity>
                   )}
 
-                  {form.source === 'firestore' && form.exerciseId ? (
+                  {fromLibrary ? (
                     <View style={styles.catalogBanner}>
                       <Text style={styles.catalogBannerLabel}>From library</Text>
                       <View style={styles.catalogMetaRow}>
@@ -364,91 +387,41 @@ export default function AddEditActivityModal({
                     </View>
                   ) : null}
 
-                  <Text style={styles.sectionLabel}>Log type</Text>
-                  <Text style={styles.hint}>
-                    {lockedType
-                      ? 'Strength exercises use reps. Enter sets and reps below (optional duration for calories).'
-                      : 'Time, distance, or reps — cardio library exercises default to time; you can switch to distance if needed.'}
-                  </Text>
-                  <ActivityTypeSelector
-                    value={type}
-                    onChange={(t) => set('type', t)}
-                    disabled={saving || lockedType}
-                  />
-
                   <LabeledInput
                     label="Name"
                     value={form.name}
                     onChangeText={(v) => set('name', v)}
-                    placeholder="e.g. Morning run"
+                    placeholder={fromLibrary ? 'Exercise name' : 'e.g. Morning walk'}
                     Colors={Colors}
                     styles={styles}
                   />
 
-                  {type === 'time' && (
-                    <DurationMinutesField
-                      optional={false}
-                      value={form.durationMinutes}
-                      onChangeText={(v) => set('durationMinutes', v)}
-                      placeholder="30"
-                      Colors={Colors}
-                      styles={styles}
-                    />
-                  )}
+                  <DurationMinutesField
+                    value={form.durationMinutes}
+                    onChangeText={(v) => set('durationMinutes', v)}
+                    placeholder="30"
+                    Colors={Colors}
+                    styles={styles}
+                  />
 
-                  {type === 'distance' && (
-                    <>
-                      <DurationMinutesField
-                        optional={false}
-                        value={form.durationMinutes}
-                        onChangeText={(v) => set('durationMinutes', v)}
-                        placeholder="45"
-                        Colors={Colors}
-                        styles={styles}
-                      />
-                      <LabeledInput
-                        label="Distance"
-                        hint="Kilometers (km)"
-                        value={form.distanceKm}
-                        onChangeText={(v) => set('distanceKm', v)}
-                        keyboardType="decimal-pad"
-                        placeholder="e.g. 5.2"
-                        Colors={Colors}
-                        styles={styles}
-                      />
-                    </>
-                  )}
-
-                  {type === 'reps' && (
-                    <>
-                      <LabeledInput
-                        label="Reps per set"
-                        value={form.repsPerSet}
-                        onChangeText={(v) => set('repsPerSet', v)}
-                        keyboardType="number-pad"
-                        placeholder="e.g. 10"
-                        Colors={Colors}
-                        styles={styles}
-                      />
-                      <LabeledInput
-                        label="Sets"
-                        value={form.sets}
-                        onChangeText={(v) => set('sets', v)}
-                        keyboardType="number-pad"
-                        placeholder="e.g. 3"
-                        Colors={Colors}
-                        styles={styles}
-                      />
-                      <DurationMinutesField
-                        optional
-                        value={form.durationMinutes}
-                        onChangeText={(v) => set('durationMinutes', v)}
-                        placeholder=""
-                        Colors={Colors}
-                        styles={styles}
-                      />
-                    </>
-                  )}
+                  <LabeledInput
+                    label="Calories burned"
+                    hint={
+                      fromLibrary
+                        ? 'Filled from your weight and kcal/h (80 kg) when you enter time — you can adjust.'
+                        : 'Enter the calories you want to log for this activity.'
+                    }
+                    value={form.caloriesBurned}
+                    onChangeText={(v) => {
+                      caloriesUserTouchedRef.current = true;
+                      const cleaned = v.replace(/[^0-9.,]/g, '').replace(/(\..*)\./g, '$1');
+                      set('caloriesBurned', cleaned);
+                    }}
+                    keyboardType="decimal-pad"
+                    placeholder="0"
+                    Colors={Colors}
+                    styles={styles}
+                  />
 
                   <View style={{ height: 100 }} />
                 </ScrollView>

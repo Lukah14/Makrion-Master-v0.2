@@ -13,6 +13,7 @@ import StrikeBadge from '@/components/common/StrikeBadge';
 import TodayPage from '@/components/activity/TodayPage';
 import { isActivityStrikeComplete, countStreak } from '@/lib/strikeHelpers';
 import { useActivityLog } from '@/hooks/useActivityLog';
+import { useSteps } from '@/hooks/useSteps';
 import AddEditActivityModal from '@/components/activity/AddEditActivityModal';
 
 function ActivitySummaryBar({ data }) {
@@ -71,9 +72,13 @@ export default function ActivityScreen() {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [activityModalOpen, setActivityModalOpen] = useState(false);
   const [editingEntryId, setEditingEntryId] = useState(null);
-  const { dateKey } = useNutritionDate();
+  const { dateKey, bumpCalendarRefresh, calendarRefreshKey } = useNutritionDate();
   const activityLog = useActivityLog(dateKey);
+  const stepsHook = useSteps(dateKey, calendarRefreshKey);
   const today = todayDateKey();
+
+  const stepsToday = stepsHook.steps;
+  const stepsGoal = stepsHook.goal;
 
   const editingEntry = useMemo(
     () => (editingEntryId ? activityLog.entries.find((e) => e.id === editingEntryId) : null),
@@ -107,12 +112,14 @@ export default function ActivityScreen() {
     [activityLog, editingEntryId],
   );
 
+  const stepProgressPct = stepsHook.stepProgressPercent;
+
   const activityData = {
     caloriesBurned: activityLog.totalCaloriesBurned || 0,
     activeMinutes: activityLog.entries.reduce((sum, e) => sum + (e.durationMinutes || 0), 0),
-    steps: 0,
-    stepsGoal: 10000,
-    stepProgress: 0,
+    steps: stepsToday,
+    stepsGoal,
+    stepProgress: stepProgressPct,
   };
 
   const ACTIVITY_BURN_TARGET = 500;
@@ -154,9 +161,31 @@ export default function ActivityScreen() {
           </View>
         ) : null}
 
+        {stepsHook.error ? (
+          <View style={s.errorBanner}>
+            <Text style={s.errorBannerText}>{stepsHook.error}</Text>
+            <TouchableOpacity onPress={() => stepsHook.reload()} style={s.errorRetry} activeOpacity={0.7}>
+              <Text style={s.errorRetryText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
         <TodayPage
           entries={activityLog.entries}
           loading={activityLog.loading}
+          dateKey={dateKey}
+          isToday={dateKey === today}
+          stepsToday={stepsToday}
+          stepsGoal={stepsGoal}
+          stepsLoading={stepsHook.loading}
+          onSaveSteps={async (v) => {
+            await stepsHook.saveSteps(v);
+            bumpCalendarRefresh();
+          }}
+          onSaveGoal={async (v) => {
+            await stepsHook.saveGoal(v);
+            bumpCalendarRefresh();
+          }}
           onAdd={openAddActivity}
           onEdit={(e) => {
             setEditingEntryId(e.id);

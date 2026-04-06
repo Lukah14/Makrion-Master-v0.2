@@ -14,16 +14,17 @@ import { useSavedFoods } from '@/hooks/useSavedFoods';
 import { getCategoryIcon } from '@/components/recipes/foodCategoryIcons';
 import NutritionFacts from '@/components/recipes/NutritionFacts';
 import {
-  normalizeServing,
+  normalizeServingsFromDetail,
+  ensureGramsOption,
   selectBestServing,
-  selectGramServing,
-  formatServingLabel,
   getServingDropdownOptions,
   defaultQuantityForServing,
 } from '@/lib/servingUtils';
 
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+
+const ICON_VERSUS = require('@/src/Icons/Versus.png');
 
 const CHART_SIZE = 100;
 const STROKE_WIDTH = 20;
@@ -234,52 +235,26 @@ function computeNutrition(serving, quantity) {
   };
 }
 
-function ensureGramServing(servingsList) {
-  if (!servingsList || servingsList.length === 0) return servingsList;
-  if (servingsList.some((s) => s.isGramServing)) return servingsList;
-
-  const donor = servingsList.find((s) => s.per100g) || servingsList[0];
-  if (!donor) return servingsList;
-
-  let per100g = donor.per100g;
-  if (!per100g && donor.metricAmount > 0) {
-    const grams = donor.metricUnit === 'oz' ? donor.metricAmount * 28.3495 : donor.metricAmount;
-    if (grams > 0) {
-      const f = 100 / grams;
-      per100g = {};
-      for (const k of Object.keys(donor.nutrition)) per100g[k] = round1(donor.nutrition[k] * f);
-    }
-  }
-  if (!per100g) return servingsList;
-
-  return [
-    {
-      id: 'synthetic_100g',
-      description: '100g',
-      numberOfUnits: 100,
-      metricAmount: 100,
-      metricUnit: 'g',
-      isDefault: false,
-      isGramServing: true,
-      nutrition: per100g,
-      per100g,
-      displayLabel: 'grams',
-    },
-    ...servingsList,
-  ];
-}
-
-export default function FoodDetailScreen({ food: initialFood, onBack, onAddToLog }) {
+export default function FoodDetailScreen({ food: initialFood, onBack, onAddToLog, onCompare }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
   const { isFoodSaved, toggleSaveFood } = useSavedFoods();
 
-  const [servings, setServings] = useState(() => ensureGramServing(initialFood.servings || []));
-  const [selectedServing, setSelectedServing] = useState(
-    initialFood.defaultServing || (initialFood.servings ? selectBestServing(initialFood.servings) : null)
-  );
+  const [servings, setServings] = useState(() => {
+    const list = ensureGramsOption(initialFood.servings || []) || initialFood.servings || [];
+    return list;
+  });
+  const [selectedServing, setSelectedServing] = useState(() => {
+    const list = ensureGramsOption(initialFood.servings || []) || initialFood.servings || [];
+    const preferred = initialFood.defaultServing || selectBestServing(list);
+    const match = preferred && list.find((s) => s.id === preferred.id);
+    return match || preferred || selectBestServing(list);
+  });
   const [quantity, setQuantity] = useState(() => {
-    const best = initialFood.defaultServing || (initialFood.servings ? selectBestServing(initialFood.servings) : null);
+    const list = ensureGramsOption(initialFood.servings || []) || initialFood.servings || [];
+    const preferred = initialFood.defaultServing || selectBestServing(list);
+    const match = preferred && list.find((s) => s.id === preferred.id);
+    const best = match || preferred || selectBestServing(list);
     if (!best) return 100;
     return defaultQuantityForServing(best);
   });
@@ -287,7 +262,7 @@ export default function FoodDetailScreen({ food: initialFood, onBack, onAddToLog
   const [pickerVisible, setPickerVisible] = useState(false);
 
   useEffect(() => {
-    if (initialFood?.source === 'fatsecret' && initialFood?.id && (!initialFood.servings || initialFood.servings.length === 0)) {
+    if (initialFood?.source === 'fatsecret' && initialFood?.id) {
       fetchFoodDetail(initialFood.id);
     }
   }, [initialFood?.id]);
@@ -302,73 +277,16 @@ export default function FoodDetailScreen({ food: initialFood, onBack, onAddToLog
       if (res.ok) {
         const data = await res.json();
         const foodDetail = data?.food;
-        if (foodDetail && foodDetail.servings) {
-          const normalized = foodDetail.servings.map((raw, i) => {
-            const metricAmount = raw.metricAmount || 0;
-            const metricUnit = raw.metricUnit || '';
-            const numberOfUnits = raw.numberOfUnits || 1;
-            const description = raw.description || '1 serving';
-            const isDefault = raw.isDefault || false;
-
-            const isGramServing =
-              description.toLowerCase() === 'g' ||
-              description.toLowerCase() === '1 g' ||
-              (description.match(/^[\d.]+ ?g$/i) && !description.includes('('));
-
-            let per100g = null;
-            if (metricAmount > 0 && (metricUnit === 'g' || metricUnit === 'ml' || metricUnit === 'oz')) {
-              const grams = metricUnit === 'oz' ? metricAmount * 28.3495 : metricAmount;
-              if (grams > 0) {
-                per100g = {};
-                const factor = 100 / grams;
-                per100g.calories = round1(raw.calories * factor);
-                per100g.protein = round1(raw.protein * factor);
-                per100g.carbohydrate = round1(raw.carbohydrate * factor);
-                per100g.fat = round1(raw.fat * factor);
-                per100g.saturated_fat = round1(raw.saturated_fat * factor);
-                per100g.trans_fat = round1(raw.trans_fat * factor);
-                per100g.polyunsaturated_fat = round1(raw.polyunsaturated_fat * factor);
-                per100g.monounsaturated_fat = round1(raw.monounsaturated_fat * factor);
-                per100g.fiber = round1(raw.fiber * factor);
-                per100g.sugar = round1(raw.sugar * factor);
-                per100g.cholesterol = round1(raw.cholesterol * factor);
-                per100g.sodium = round1(raw.sodium * factor);
-              }
+        if (foodDetail) {
+          const normalized = normalizeServingsFromDetail(foodDetail);
+          if (normalized.length > 0) {
+            const withGram = ensureGramsOption(normalized) || normalized;
+            setServings(withGram);
+            const best = selectBestServing(withGram);
+            if (best) {
+              setSelectedServing(best);
+              setQuantity(defaultQuantityForServing(best));
             }
-
-            return {
-              id: raw.id || `serving_${i}`,
-              description,
-              numberOfUnits,
-              metricAmount,
-              metricUnit,
-              isDefault,
-              isGramServing,
-              nutrition: {
-                calories: raw.calories || 0,
-                protein: raw.protein || 0,
-                carbohydrate: raw.carbohydrate || 0,
-                fat: raw.fat || 0,
-                saturated_fat: raw.saturated_fat || 0,
-                trans_fat: raw.trans_fat || 0,
-                polyunsaturated_fat: raw.polyunsaturated_fat || 0,
-                monounsaturated_fat: raw.monounsaturated_fat || 0,
-                fiber: raw.fiber || 0,
-                sugar: raw.sugar || 0,
-                cholesterol: raw.cholesterol || 0,
-                sodium: raw.sodium || 0,
-              },
-              per100g,
-              displayLabel: formatServingLabel(description, metricAmount, metricUnit, isGramServing),
-            };
-          });
-
-          const withGram = ensureGramServing(normalized);
-          setServings(withGram);
-          const best = selectBestServing(withGram);
-          if (best) {
-            setSelectedServing(best);
-            setQuantity(defaultQuantityForServing(best));
           }
         }
       }
@@ -380,6 +298,21 @@ export default function FoodDetailScreen({ food: initialFood, onBack, onAddToLog
     setSelectedServing(serving);
     setQuantity(defaultQuantityForServing(serving));
   };
+
+  const foodPayloadForLog = useCallback(() => {
+    const best = selectedServing || selectBestServing(servings);
+    if (!best) return { ...initialFood, servings };
+    return {
+      ...initialFood,
+      servings,
+      defaultServing: best,
+      servingText: best.displayLabel || initialFood.servingText,
+      calories: Math.round(best.nutrition.calories),
+      protein: round1(best.nutrition.protein),
+      carbs: round1(best.nutrition.carbohydrate),
+      fat: round1(best.nutrition.fat),
+    };
+  }, [initialFood, servings, selectedServing]);
 
   const nutrition = computeNutrition(selectedServing, quantity);
 
@@ -394,7 +327,7 @@ export default function FoodDetailScreen({ food: initialFood, onBack, onAddToLog
   const categoryIcon = getCategoryIcon(initialFood.name);
 
   const isGramMode = selectedServing?.isGramServing;
-  const qtyStep = isGramMode ? 10 : 0.5;
+  const qtyStep = isGramMode ? 1 : 0.5;
   const qtyMin = isGramMode ? 1 : 0.5;
   const qtyUnit = isGramMode ? 'g' : '';
 
@@ -471,9 +404,25 @@ export default function FoodDetailScreen({ food: initialFood, onBack, onAddToLog
           <ArrowLeft size={22} color={Colors.textPrimary} />
         </TouchableOpacity>
         <Text style={styles.topBarTitle} numberOfLines={1}>Food Details</Text>
-        <TouchableOpacity style={styles.iconBtn} onPress={handleBookmark} activeOpacity={0.7}>
-          <Bookmark size={20} color={bookmarked ? Colors.textPrimary : Colors.textSecondary} fill={bookmarked ? Colors.textPrimary : 'transparent'} />
-        </TouchableOpacity>
+        <View style={styles.topBarActions}>
+          {onCompare ? (
+            <TouchableOpacity
+              style={styles.iconBtn}
+              onPress={() => onCompare(initialFood)}
+              activeOpacity={0.7}
+              accessibilityLabel="Compare foods"
+            >
+              <Image
+                source={ICON_VERSUS}
+                style={[styles.compareIcon, { tintColor: Colors.textPrimary }]}
+                resizeMode="contain"
+              />
+            </TouchableOpacity>
+          ) : null}
+          <TouchableOpacity style={styles.iconBtn} onPress={handleBookmark} activeOpacity={0.7}>
+            <Bookmark size={20} color={bookmarked ? Colors.textPrimary : Colors.textSecondary} fill={bookmarked ? Colors.textPrimary : 'transparent'} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -559,7 +508,7 @@ export default function FoodDetailScreen({ food: initialFood, onBack, onAddToLog
         <TouchableOpacity
           style={styles.addToLogBtn}
           activeOpacity={0.85}
-          onPress={() => onAddToLog?.(initialFood)}
+          onPress={() => onAddToLog?.(foodPayloadForLog())}
         >
           <Plus size={20} color={Colors.onPrimary} strokeWidth={2.5} />
           <Text style={styles.addToLogText}>Add to Food Log</Text>
@@ -593,9 +542,18 @@ const createStyles = (Colors) => StyleSheet.create({
     flex: 1, fontSize: 17, fontFamily: 'PlusJakartaSans-SemiBold',
     color: Colors.textPrimary, textAlign: 'center', marginHorizontal: 8,
   },
+  topBarActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   iconBtn: {
     width: 40, height: 40, borderRadius: 20, backgroundColor: Colors.background,
     alignItems: 'center', justifyContent: 'center',
+  },
+  compareIcon: {
+    width: 20,
+    height: 20,
   },
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: 20, paddingTop: 24 },

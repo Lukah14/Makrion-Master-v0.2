@@ -1,34 +1,53 @@
 import { useState, useMemo } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
-import { Link2, MessageSquare } from 'lucide-react-native';
+import { Link2 } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import MonthlyCalendar from '@/components/calendar/MonthlyCalendar';
 import { getMonthDateKeyRange } from '@/lib/calendarUtils';
 import { toDateKey } from '@/lib/dateKey';
 import { computeCurrentStreak, isSuccessfulCompletionDay } from '@/lib/habitDayState';
+import {
+  normalizeNumericConditionType,
+  anyValueNumericDayHasEntry,
+  anyValueNumericDayCurrent,
+  NUMERIC_CONDITION,
+} from '@/lib/habitNumericCondition';
 
 const ACCENT = '#E8526A';
 const GREEN = '#2F9D5C';
 const AMBER = '#D97706';
 
-function noteDateKey(n) {
-  if (!n?.date) return null;
-  if (typeof n.date === 'string') {
-    const s = n.date.slice(0, 10);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  }
-  const d = new Date(n.date);
-  if (Number.isNaN(d.getTime())) return null;
-  return toDateKey(d);
-}
-
 function formatDayLogSummary(habit, row) {
   if (!row) return 'No log saved for this day.';
+  if (habit.type === 'numeric' && normalizeNumericConditionType(habit) === NUMERIC_CONDITION.ANY_VALUE) {
+    const u = habit.unit ? ` ${habit.unit}` : '';
+    if (!anyValueNumericDayHasEntry(row)) {
+      return 'No value logged for this day.';
+    }
+    const v = anyValueNumericDayCurrent(row);
+    const legacy =
+      (row.progressValue === undefined || row.progressValue === null) &&
+      (row.isCompleted === true || row.completed === true);
+    return legacy
+      ? `Value: ${v}${u} (legacy estimate)`
+      : `Value: ${v}${u}`;
+  }
   const ok = isSuccessfulCompletionDay(habit, row);
   const parts = [];
   parts.push(ok ? 'Goal met' : 'Logged (goal not met)');
-  if (row.progressValue != null && habit.type === 'numeric') {
-    parts.push(`Progress: ${row.progressValue} / ${habit.target ?? '—'}`);
+  if (
+    row.progressValue !== undefined &&
+    row.progressValue !== null &&
+    habit.type === 'numeric'
+  ) {
+    const ct = normalizeNumericConditionType(habit);
+    const tgt = habit.target ?? habit.targetValue ?? habit.evaluation?.targetValue;
+    const u = habit.unit ? ` ${habit.unit}` : '';
+    if (ct === NUMERIC_CONDITION.ANY_VALUE || tgt == null || !Number.isFinite(Number(tgt))) {
+      parts.push(`Progress: ${row.progressValue}${u}`);
+    } else {
+      parts.push(`Progress: ${row.progressValue} / ${tgt}${u}`);
+    }
   }
   if (habit.type === 'timer' && row.progressValue != null) {
     const sec = Number(row.progressValue);
@@ -63,7 +82,6 @@ export default function HabitDetailCalendar({
     () => (historyProp.length > 0 ? historyProp : (habit.completionHistory || [])),
     [historyProp, habit.completionHistory],
   );
-  const notes = useMemo(() => habit.notes || [], [habit.notes]);
 
   const rowsByDate = useMemo(() => {
     const m = new Map();
@@ -77,27 +95,27 @@ export default function HabitDetailCalendar({
     const completed = new Set(completionHistory);
     const { keys } = getMonthDateKeyRange(viewYear, viewMonth);
     const meta = {};
+    const isAnyNumeric =
+      habit.type === 'numeric' && normalizeNumericConditionType(habit) === NUMERIC_CONDITION.ANY_VALUE;
     keys.forEach((k) => {
       const row = rowsByDate.get(k);
       let completionRing;
       if (row) {
         completionRing = isSuccessfulCompletionDay(habit, row) ? 'full' : 'partial';
       }
+      let valueBadge;
+      if (isAnyNumeric && row && anyValueNumericDayHasEntry(row)) {
+        valueBadge = String(anyValueNumericDayCurrent(row));
+      }
       meta[k] = {
         hasTrackedData: completed.has(k) || !!row,
         completionRing,
-        hasMoment: notes.some((n) => noteDateKey(n) === k),
+        valueBadge,
+        hasMoment: false,
       };
     });
     return meta;
-  }, [viewYear, viewMonth, completionHistory, notes, rowsByDate, habit]);
-
-  const monthNotes = notes.filter((n) => {
-    const k = noteDateKey(n);
-    if (!k) return false;
-    const [y, m] = k.split('-').map(Number);
-    return y === viewYear && m - 1 === viewMonth;
-  });
+  }, [viewYear, viewMonth, completionHistory, rowsByDate, habit]);
 
   const prevMonth = () => {
     if (viewMonth === 0) {
@@ -161,7 +179,7 @@ export default function HabitDetailCalendar({
         ) : null}
       </View>
 
-      <View style={styles.section}>
+      <View style={[styles.section, styles.sectionLast]}>
         <View style={styles.sectionHeader}>
           <Link2 size={18} color={ACCENT} />
           <View style={styles.sectionLabelPill}>
@@ -169,25 +187,6 @@ export default function HabitDetailCalendar({
           </View>
         </View>
         <Text style={styles.streakValue}>{streakText}</Text>
-      </View>
-
-      <View style={[styles.section, styles.sectionLast]}>
-        <View style={styles.sectionHeader}>
-          <MessageSquare size={18} color={ACCENT} />
-          <View style={styles.sectionLabelPill}>
-            <Text style={styles.sectionLabelText}>Notes</Text>
-          </View>
-        </View>
-        {monthNotes.length === 0 ? (
-          <Text style={styles.noNotes}>No notes for this month</Text>
-        ) : (
-          monthNotes.map((note, i) => (
-            <View key={i} style={styles.noteItem}>
-              <Text style={styles.noteDate}>{note.date}</Text>
-              <Text style={styles.noteText}>{note.text}</Text>
-            </View>
-          ))
-        )}
       </View>
 
       <View style={{ height: 40 }} />
@@ -245,7 +244,7 @@ function createStyles(Colors) {
       borderColor: Colors.border,
     },
     sectionLast: {
-      marginBottom: 12,
+      marginBottom: 16,
     },
     sectionHeader: {
       flexDirection: 'row',
@@ -291,27 +290,6 @@ function createStyles(Colors) {
       color: ACCENT,
       textAlign: 'center',
       paddingBottom: 4,
-    },
-    noNotes: {
-      fontSize: 14,
-      color: Colors.textSecondary,
-      textAlign: 'center',
-      paddingVertical: 8,
-    },
-    noteItem: {
-      marginBottom: 12,
-      borderLeftWidth: 2,
-      borderLeftColor: ACCENT,
-      paddingLeft: 12,
-    },
-    noteDate: {
-      fontSize: 11,
-      color: Colors.textTertiary,
-      marginBottom: 2,
-    },
-    noteText: {
-      fontSize: 14,
-      color: Colors.textPrimary,
     },
   });
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   View, Text, Modal, TouchableOpacity, TextInput,
   StyleSheet, Pressable, Platform, ScrollView,
@@ -10,6 +10,7 @@ import {
   selectBestServing,
   getServingDropdownOptions,
   defaultQuantityForServing,
+  ensureGramsOption,
 } from '@/lib/servingUtils';
 
 function round1(n) {
@@ -88,17 +89,22 @@ export default function AddToLogSheet({ visible, food, onAdd, onClose, initialMe
     }
   }, [visible, initialMealType]);
 
+  const servings = useMemo(() => {
+    if (!food?.servings?.length) return food?.servings || [];
+    return ensureGramsOption([...food.servings]) || food.servings;
+  }, [food?.id, food?.servings]);
+
   useEffect(() => {
     if (food && visible) {
-      const best = food.defaultServing || selectBestServing(food.servings);
-      setSelectedServing(best);
+      const preferred = food.defaultServing || selectBestServing(servings);
+      const match = preferred && servings.find((s) => s.id === preferred.id);
+      const best = match || preferred || selectBestServing(servings);
+      setSelectedServing(best || null);
       setQuantity(best ? defaultQuantityForServing(best) : 100);
     }
-  }, [food?.id, visible]);
+  }, [food?.id, visible, servings]);
 
   if (!food) return null;
-
-  const servings = food.servings || [];
   const hasServings = servings.length > 0 && selectedServing;
 
   let nutrition;

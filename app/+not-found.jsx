@@ -10,7 +10,7 @@ export default function NotFoundScreen() {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Page not found</Text>
-      <TouchableOpacity style={styles.button} onPress={() => router.replace('/')}>
+      <TouchableOpacity style={styles.button} onPress={() => router.replace('/(tabs)')}>
         <Text style={styles.buttonText}>Go home</Text>
       </TouchableOpacity>
     </View>

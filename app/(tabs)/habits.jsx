@@ -20,10 +20,10 @@ import { useNutritionDate } from '@/context/NutritionDateContext';
 import CalendarModal from '@/components/calendar/CalendarModal';
 import SelectedDateBar from '@/components/calendar/SelectedDateBar';
 import { todayDateKey, addDaysToDateKey } from '@/lib/dateKey';
-import { moodRatingToEmoji } from '@/lib/moodEmoji';
 import StrikeBadge from '@/components/common/StrikeBadge';
 import HabitSubNav from '@/components/habits/HabitSubNav';
 import TodayView from '@/components/habits/TodayView';
+import MemorableMomentsSection from '@/components/habits/MemorableMomentsSection';
 import HabitsManageView from '@/components/habits/HabitsManageView';
 import AddHabitWizard from '@/components/habits/AddHabitWizard';
 import HabitDetailScreen from '@/components/habits/HabitDetailScreen';
@@ -34,7 +34,20 @@ import {
   elapsedSecondsToDisplay,
   dateKeysSuccessfulFromCompletions,
 } from '@/lib/habitDayState';
-import { listHabitCompletionsForHabit, listHabitCompletionsSince } from '@/services/habitService';
+import {
+  normalizeNumericConditionType,
+  getNumericTargetValue,
+  isNumericHabitSatisfied,
+  numericQuickCompleteValue,
+  habitCountsTowardDailyCompletion,
+  NUMERIC_CONDITION,
+} from '@/lib/habitNumericCondition';
+import {
+  listHabitCompletionsForHabit,
+  listHabitCompletionsSince,
+  removeHabitCompletion,
+  clearHabitCompletionsForHabit,
+} from '@/services/habitService';
 
 export default function HabitsScreen() {
   const { colors: Colors } = useTheme();
@@ -55,21 +68,22 @@ export default function HabitsScreen() {
     removeHabit,
     toggleCompletion,
     saveDayCompletion,
+    reload: reloadHabits,
     loading: habitsLoading,
     error: habitsError,
   } = useHabits(dateKey, runningTimers);
 
   const {
-    moments: firebaseMoments,
-    add: addMoment,
-    edit: editMoment,
-    remove: removeMoment,
+    dailyMoment,
+    loading: momentsLoading,
+    error: momentsError,
+    upsertDaily,
+    clearDaily,
   } = useMemorableMoments(dateKey);
 
   const [activeSubpage, setActiveSubpage] = useState('today');
   const [calendarOpen, setCalendarOpen] = useState(false);
 
-  const moments = firebaseMoments.map((m) => mapFirebaseMomentForUi(m, dateKey));
   const [showWizard, setShowWizard] = useState(false);
   const [editingHabit, setEditingHabit] = useState(null);
   const [detailHabit, setDetailHabit] = useState(null);
@@ -127,6 +141,12 @@ export default function HabitsScreen() {
     if (!detailHabit) return null;
     return habitTemplates.find((h) => h.id === detailHabit.id) || detailHabit;
   }, [habitTemplates, detailHabit]);
+
+  /** Fresh Firestore template for the open detail (stable ref until habits reload). */
+  const detailHabitForScreen = useMemo(() => {
+    if (!detailHabit?.id) return null;
+    return habitTemplates.find((h) => h.id === detailHabit.id) || detailHabit;
+  }, [detailHabit, habitTemplates]);
 
   const detailCompletionHistory = useMemo(() => {
     if (!detailHabitTemplate) return [];
@@ -186,8 +206,10 @@ export default function HabitsScreen() {
     return () => clearInterval(id);
   }, [runningTimers]);
 
+  const habitsForCompletionTally = habitsForSelectedDay.filter(habitCountsTowardDailyCompletion);
   const todayComplete =
-    habitsForSelectedDay.length > 0 && habitsForSelectedDay.every((h) => h.completed);
+    habitsForCompletionTally.length > 0 &&
+    habitsForCompletionTally.every((h) => h.completed);
 
   const openDetail = useCallback(
     (habit, tab = 'Calendar') => {
@@ -210,13 +232,20 @@ export default function HabitsScreen() {
     async (id) => {
       const habit = habits.find((h) => h.id === id);
       if (!habit || habit.type !== 'numeric') return;
-      const target = Math.max(Number(habit.target) || 1, 1);
-      const step = target >= 100 ? 100 : 1;
-      const cur = Number(habit.current) || 0;
-      const next = Math.min(cur + step, target);
+      const cond = normalizeNumericConditionType(habit);
+      const tgt = getNumericTargetValue(habit);
+      const stepBase = tgt != null && Number(tgt) >= 100 ? 100 : 1;
+      const base =
+        cond === NUMERIC_CONDITION.ANY_VALUE
+          ? habit.numericDayHasEntry && habit.current != null
+            ? Number(habit.current)
+            : 0
+          : Number(habit.current) || 0;
+      const next = base + stepBase;
+      const completed = isNumericHabitSatisfied(next, cond, tgt);
       await saveDayCompletion(id, {
         progressValue: next,
-        isCompleted: next >= target,
+        isCompleted: cond === NUMERIC_CONDITION.ANY_VALUE ? false : completed,
         trackingStatus: null,
       });
       bumpCalendarRefresh();
@@ -228,13 +257,20 @@ export default function HabitsScreen() {
     async (id) => {
       const habit = habits.find((h) => h.id === id);
       if (!habit || habit.type !== 'numeric') return;
-      const target = Math.max(Number(habit.target) || 1, 1);
-      const step = target >= 100 ? 100 : 1;
-      const cur = Number(habit.current) || 0;
-      const next = Math.max(cur - step, 0);
+      const cond = normalizeNumericConditionType(habit);
+      const tgt = getNumericTargetValue(habit);
+      const stepBase = tgt != null && Number(tgt) >= 100 ? 100 : 1;
+      const base =
+        cond === NUMERIC_CONDITION.ANY_VALUE
+          ? habit.numericDayHasEntry && habit.current != null
+            ? Number(habit.current)
+            : 0
+          : Number(habit.current) || 0;
+      const next = Math.max(base - stepBase, 0);
+      const completed = isNumericHabitSatisfied(next, cond, tgt);
       await saveDayCompletion(id, {
         progressValue: next,
-        isCompleted: next >= target,
+        isCompleted: cond === NUMERIC_CONDITION.ANY_VALUE ? false : completed,
         trackingStatus: null,
       });
       bumpCalendarRefresh();
@@ -246,35 +282,59 @@ export default function HabitsScreen() {
     async (id) => {
       const habit = habits.find((h) => h.id === id);
       if (!habit || habit.type !== 'numeric') return;
-      const target = Number(habit.target) || 1;
+      const cond = normalizeNumericConditionType(habit);
+      const tgt = getNumericTargetValue(habit);
+      if (cond === NUMERIC_CONDITION.ANY_VALUE) {
+        if (!user?.uid || !dateKey) return;
+        if (habit.numericDayHasEntry) {
+          await removeHabitCompletion(user.uid, dateKey, id);
+          await reloadHabits();
+        } else {
+          await saveDayCompletion(id, {
+            progressValue: 0,
+            isCompleted: false,
+            trackingStatus: null,
+          });
+        }
+        bumpCalendarRefresh();
+        return;
+      }
       const cur = Number(habit.current) || 0;
-      if (cur >= target) {
+      const done = isNumericHabitSatisfied(cur, cond, tgt);
+      if (done) {
         await saveDayCompletion(id, {
           progressValue: 0,
           isCompleted: false,
           trackingStatus: null,
         });
       } else {
+        const v = numericQuickCompleteValue(cond, tgt, cur);
+        const completed = isNumericHabitSatisfied(v, cond, tgt);
         await saveDayCompletion(id, {
-          progressValue: target,
-          isCompleted: true,
+          progressValue: v,
+          isCompleted: completed,
           trackingStatus: null,
         });
       }
       bumpCalendarRefresh();
     },
-    [habits, saveDayCompletion, bumpCalendarRefresh],
+    [habits, saveDayCompletion, bumpCalendarRefresh, user?.uid, dateKey, reloadHabits],
   );
 
   const setNumericCurrent = useCallback(
     async (id, value) => {
       const habit = habits.find((h) => h.id === id);
       if (!habit || habit.type !== 'numeric') return;
-      const target = Number(habit.target) || 1;
-      const v = Math.max(0, Math.min(Math.floor(Number(value)) || 0, 9_999_999));
+      const cond = normalizeNumericConditionType(habit);
+      const tgt = getNumericTargetValue(habit);
+      const raw = Number(value);
+      const v = Number.isFinite(raw)
+        ? Math.max(0, Math.min(Math.floor(raw), 9_999_999))
+        : 0;
+      const completed = isNumericHabitSatisfied(v, cond, tgt);
       await saveDayCompletion(id, {
         progressValue: v,
-        isCompleted: v >= target,
+        isCompleted: cond === NUMERIC_CONDITION.ANY_VALUE ? false : completed,
         trackingStatus: null,
       });
       bumpCalendarRefresh();
@@ -395,13 +455,16 @@ export default function HabitsScreen() {
   }, [habitTemplates]);
 
   const handleSaveEditFromDetail = useCallback(
-    async (updated) => {
-      if (!updated?.id) return;
-      await editHabit(updated.id, {
-        name: updated.name,
-        description: updated.description,
-      });
-      setDetailHabit(null);
+    async (patch) => {
+      if (!patch?.id) return;
+      const { id, ...changes } = patch;
+      try {
+        await editHabit(id, changes);
+        Alert.alert('Saved', 'Your habit was updated.');
+      } catch (e) {
+        const msg = e?.message || 'Could not save habit.';
+        Alert.alert('Could not save', msg);
+      }
     },
     [editHabit],
   );
@@ -422,8 +485,14 @@ export default function HabitsScreen() {
   const handleDeleteHabit = useCallback(
     async (habit) => {
       const habitId = typeof habit === 'string' ? habit : habit.id;
-      await removeHabit(habitId);
-      setDetailHabit(null);
+      try {
+        await removeHabit(habitId);
+        setDetailHabit((prev) => (prev?.id === habitId ? null : prev));
+        return true;
+      } catch (e) {
+        Alert.alert('Could not delete', e?.message || 'Try again.');
+        return false;
+      }
     },
     [removeHabit],
   );
@@ -431,9 +500,28 @@ export default function HabitsScreen() {
   const handleRestartHabit = useCallback(
     async (habit) => {
       const habitId = typeof habit === 'string' ? habit : habit.id;
-      await editHabit(habitId, { paused: false, isPaused: false });
+      if (!user?.uid) {
+        Alert.alert('Sign in required', 'You must be signed in to reset progress.');
+        return;
+      }
+      try {
+        await clearHabitCompletionsForHabit(user.uid, habitId);
+        await editHabit(habitId, {
+          streak: 0,
+          current: 0,
+          completed: false,
+          paused: false,
+          isPaused: false,
+        });
+        const rows = await listHabitCompletionsForHabit(user.uid, habitId);
+        setDetailCompletionRows(rows);
+        bumpCalendarRefresh();
+        Alert.alert('Progress reset', 'Completion history for this habit was cleared.');
+      } catch (e) {
+        Alert.alert('Could not reset', e?.message || 'Try again.');
+      }
     },
-    [editHabit],
+    [user?.uid, editHabit, bumpCalendarRefresh],
   );
 
   const handleTogglePause = useCallback(
@@ -448,13 +536,10 @@ export default function HabitsScreen() {
   const handleSaveMoment = useCallback(
     async (momentData) => {
       try {
-        const text = momentData.text?.trim() ? momentData.text.trim() : null;
-        await addMoment({
-          type: 'text',
-          text,
-          emoji: moodRatingToEmoji(momentData.moodRating),
+        await upsertDaily({
+          text: momentData.text?.trim() ? momentData.text.trim() : '',
           moodRating: momentData.moodRating ?? null,
-          photoUrl: momentData.photoUrl || null,
+          photoUrl: momentData.photoUrl ?? null,
         });
         bumpCalendarRefresh();
       } catch (e) {
@@ -462,40 +547,17 @@ export default function HabitsScreen() {
         throw e;
       }
     },
-    [addMoment, bumpCalendarRefresh],
+    [upsertDaily, bumpCalendarRefresh],
   );
 
-  const handleUpdateMoment = useCallback(
-    async (momentId, updates) => {
-      try {
-        const text = updates.text?.trim() ? updates.text.trim() : null;
-        await editMoment(momentId, {
-          text,
-          emoji: moodRatingToEmoji(updates.moodRating),
-          moodRating: updates.moodRating ?? null,
-          photoUrl: updates.photoUrl !== undefined ? updates.photoUrl : undefined,
-        });
-        bumpCalendarRefresh();
-      } catch (e) {
-        Alert.alert('Could not update', e?.message || 'Try again.');
-        throw e;
-      }
-    },
-    [editMoment, bumpCalendarRefresh],
-  );
-
-  const handleDeleteMoment = useCallback(
-    async (momentId) => {
-      try {
-        await removeMoment(momentId);
-        bumpCalendarRefresh();
-      } catch (e) {
-        Alert.alert('Could not delete', e?.message || 'Try again.');
-        throw e;
-      }
-    },
-    [removeMoment, bumpCalendarRefresh],
-  );
+  const handleClearMoment = useCallback(async () => {
+    try {
+      await clearDaily();
+      bumpCalendarRefresh();
+    } catch (e) {
+      Alert.alert('Could not clear', e?.message || 'Try again.');
+    }
+  }, [clearDaily, bumpCalendarRefresh]);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -529,46 +591,56 @@ export default function HabitsScreen() {
         ) : null}
 
         {activeSubpage === 'today' ? (
-          habitsLoading ? (
-            <ActivityIndicator style={styles.loader} color={Colors.primary} />
-          ) : activeHabits.length === 0 ? (
-            <EmptyState
-              icon={ClipboardList}
-              title="No habits yet"
-              message="Create your first habit to start tracking"
-              actionLabel="Create Habit"
-              onAction={() => setShowWizard(true)}
-            />
-          ) : habitsForSelectedDay.length === 0 ? (
-            <EmptyState
-              icon={ClipboardList}
-              title="Nothing scheduled this day"
-              message="No habits are due on the selected date. Pick another day or adjust habit schedules."
-            />
-          ) : (
-            <TodayView
+          <View>
+            {habitsLoading ? (
+              <ActivityIndicator style={styles.loader} color={Colors.primary} />
+            ) : activeHabits.length === 0 ? (
+              <EmptyState
+                icon={ClipboardList}
+                title="No habits yet"
+                message="Create your first habit to start tracking"
+                actionLabel="Create Habit"
+                onAction={() => setShowWizard(true)}
+              />
+            ) : habitsForSelectedDay.length === 0 ? (
+              <View style={styles.habitsEmptyDay}>
+                <Text style={styles.habitsEmptyDayTitle}>
+                  {dateKey === today ? 'No habits scheduled today' : 'No habits scheduled this day'}
+                </Text>
+                <Text style={styles.habitsEmptyDayMessage}>
+                  Pick another date or adjust your habit schedules. You can still log a memorable moment below.
+                </Text>
+              </View>
+            ) : (
+              <TodayView
+                dateKey={dateKey}
+                todayKey={today}
+                habits={habitsForTodayView}
+                onToggle={toggleHabit}
+                onIncrement={incrementHabit}
+                onDecrement={decrementHabit}
+                onNumericQuickComplete={numericQuickComplete}
+                onSetNumericCurrent={setNumericCurrent}
+                onToggleChecklistItem={toggleChecklistItem}
+                onTimerStart={startOrResumeTimer}
+                onTimerPause={pauseTimer}
+                onTimerStop={stopTimer}
+                onTimerReset={resetTimer}
+                onHabitLongPress={(habit) => openDetail(habit, 'Calendar')}
+                onAddHabit={() => setShowWizard(true)}
+                runningTimers={runningTimers}
+              />
+            )}
+            <MemorableMomentsSection
               dateKey={dateKey}
               todayKey={today}
-              habits={habitsForTodayView}
-              moments={moments}
-              onToggle={toggleHabit}
-              onIncrement={incrementHabit}
-              onDecrement={decrementHabit}
-              onNumericQuickComplete={numericQuickComplete}
-              onSetNumericCurrent={setNumericCurrent}
-              onToggleChecklistItem={toggleChecklistItem}
-              onTimerStart={startOrResumeTimer}
-              onTimerPause={pauseTimer}
-              onTimerStop={stopTimer}
-              onTimerReset={resetTimer}
-              onHabitLongPress={(habit) => openDetail(habit, 'Calendar')}
-              onAddHabit={() => setShowWizard(true)}
-              onSaveMoment={handleSaveMoment}
-              onUpdateMoment={handleUpdateMoment}
-              onDeleteMoment={handleDeleteMoment}
-              runningTimers={runningTimers}
+              dailyMoment={dailyMoment}
+              loading={momentsLoading}
+              error={momentsError}
+              onSave={handleSaveMoment}
+              onClear={handleClearMoment}
             />
-          )
+          </View>
         ) : habitsLoading || manageBulkLoading ? (
           <ActivityIndicator style={styles.loader} color={Colors.primary} />
         ) : (
@@ -600,9 +672,9 @@ export default function HabitsScreen() {
         editingHabit={editingHabit}
       />
 
-      {detailHabit && (
+      {detailHabitForScreen && (
         <HabitDetailScreen
-          habit={detailHabit}
+          habit={detailHabitForScreen}
           initialTab={detailInitialTab}
           onBack={() => setDetailHabit(null)}
           onSaveEdit={handleSaveEditFromDetail}
@@ -617,32 +689,6 @@ export default function HabitsScreen() {
       <CalendarModal visible={calendarOpen} onClose={() => setCalendarOpen(false)} />
     </SafeAreaView>
   );
-}
-
-function mapFirebaseMomentForUi(m, dateKey) {
-  let text = (m.text && String(m.text)) || '';
-  let moodRating =
-    typeof m.moodRating === 'number' && m.moodRating >= 1 && m.moodRating <= 10
-      ? m.moodRating
-      : null;
-  if (moodRating == null && text) {
-    const legacy = text.trim().match(/^Mood:\s*(\d{1,2})\/10$/i);
-    if (legacy) {
-      const n = parseInt(legacy[1], 10);
-      if (n >= 1 && n <= 10) {
-        moodRating = n;
-        text = '';
-      }
-    }
-  }
-  return {
-    id: m.id,
-    text,
-    mood: m.emoji || '✨',
-    moodRating,
-    date: m.dateKey || dateKey,
-    photoUrl: m.photoUrl || null,
-  };
 }
 
 const createStyles = (Colors) => StyleSheet.create({
@@ -675,6 +721,28 @@ const createStyles = (Colors) => StyleSheet.create({
   },
   loader: {
     marginVertical: 24,
+  },
+  habitsEmptyDay: {
+    backgroundColor: Colors.cardBackground,
+    borderRadius: Layout.borderRadius.xl,
+    paddingVertical: 22,
+    paddingHorizontal: 20,
+    marginBottom: 4,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+  },
+  habitsEmptyDayTitle: {
+    fontSize: 16,
+    fontFamily: 'PlusJakartaSans-Bold',
+    color: Colors.textPrimary,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  habitsEmptyDayMessage: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 20,
   },
   errorText: {
     color: Colors.error || '#b91c1c',

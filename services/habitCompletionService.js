@@ -14,6 +14,7 @@ import {
   where,
   serverTimestamp,
   deleteField,
+  writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
@@ -145,4 +146,24 @@ export async function toggleHabitCompletion(uid, habitId, dateKey) {
 export async function deleteHabitCompletionForDate(uid, habitId, dateKey) {
   const docId = `${habitId}_${dateKey}`;
   await deleteDoc(doc(db, 'profiles', uid, 'habit_completions', docId));
+}
+
+const BATCH_DELETE_SIZE = 400;
+
+/**
+ * Delete every habit_completions document for one habit (user-scoped).
+ * @param {string} uid
+ * @param {string} habitId
+ */
+export async function deleteAllCompletionsForHabit(uid, habitId) {
+  const q = query(completionsRef(uid), where('habitId', '==', habitId));
+  const snap = await getDocs(q);
+  const refs = snap.docs.map((d) => d.ref);
+  for (let i = 0; i < refs.length; i += BATCH_DELETE_SIZE) {
+    const batch = writeBatch(db);
+    for (const r of refs.slice(i, i + BATCH_DELETE_SIZE)) {
+      batch.delete(r);
+    }
+    await batch.commit();
+  }
 }

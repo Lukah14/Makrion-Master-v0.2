@@ -26,7 +26,10 @@ export default function AppearanceSheet({ visible, current, onChange, onClose })
                 <View key={opt.key}>
                   <TouchableOpacity
                     style={styles.optionRow}
-                    onPress={() => { onChange(opt.key); onClose(); }}
+                    onPress={() => {
+                      onClose();
+                      onChange(opt.key);
+                    }}
                     activeOpacity={0.7}
                   >
                     <View style={styles.optionText}>

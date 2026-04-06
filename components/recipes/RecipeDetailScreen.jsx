@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView, Image,
   StyleSheet, Dimensions, ActivityIndicator, Alert,
 } from 'react-native';
 import {
-  ArrowLeft, Bookmark, Share2, Plus, Clock, Users,
-  ChefHat, Star, Heart, Zap, Flame, Trash2,
+  ArrowLeft, Bookmark, Plus, Clock, Users,
+  Flame, Trash2,
 } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/context/AuthContext';
@@ -16,6 +16,12 @@ import AddRecipeToLogSheet from './AddRecipeToLogSheet';
 import NutritionFacts from './NutritionFacts';
 import CalorieBreakdown from './CalorieBreakdown';
 import { getCategoryIcon } from './foodCategoryIcons';
+import {
+  getRecipeBaseServings,
+  scaledIngredientAmountLine,
+  scaledIngredientMacros,
+  stripSavesSnippetFromDescription,
+} from '@/lib/recipeServingsScale';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const IMAGE_HEIGHT = 280;
@@ -34,13 +40,15 @@ function StatPill({ icon, label }) {
   );
 }
 
-function IngredientFoodCard({ ing, index }) {
+function IngredientFoodCard({ ing, index, scaleFactor }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
 
   const macroColors = [Colors.proteinRing, Colors.carbsRing, Colors.fatRing];
   const accentColor = macroColors[index % macroColors.length];
   const categoryIcon = getCategoryIcon(ing.name);
+  const amountLine = scaledIngredientAmountLine(ing, scaleFactor);
+  const macros = scaledIngredientMacros(ing, scaleFactor);
 
   return (
     <View style={styles.ingFoodCard}>
@@ -48,47 +56,61 @@ function IngredientFoodCard({ ing, index }) {
         <Image source={categoryIcon} style={styles.ingFoodCategoryIcon} />
       </View>
       <View style={styles.ingFoodInfo}>
-        <Text style={styles.ingFoodName} numberOfLines={2}>{ing.name}</Text>
-        {(ing.amount || ing.unit) ? (
-          <Text style={styles.ingFoodServing}>{[ing.amount, ing.unit].filter(Boolean).join(' ')}</Text>
+        {amountLine ? (
+          <Text style={styles.ingFoodName} numberOfLines={2}>{amountLine}</Text>
+        ) : (
+          <Text style={styles.ingFoodName} numberOfLines={2}>{ing.name}</Text>
+        )}
+        {amountLine ? (
+          <Text style={styles.ingFoodServing} numberOfLines={2}>{ing.name}</Text>
         ) : null}
-        {ing.calories > 0 && (
+        {macros.calories > 0 && (
           <View style={styles.ingFoodMacros}>
             <View style={styles.ingFoodMacroItem}>
               <Flame size={10} color={Colors.calories} />
-              <Text style={styles.ingFoodMacroText}>{ing.calories} kcal</Text>
+              <Text style={styles.ingFoodMacroText}>{macros.calories} kcal</Text>
             </View>
-            {ing.protein > 0 && (
+            {macros.protein > 0 && (
               <View style={styles.ingFoodMacroDot} />
             )}
-            {ing.protein > 0 && (
-              <Text style={[styles.ingFoodMacroText, { color: Colors.proteinRing }]}>{ing.protein}g P</Text>
+            {macros.protein > 0 && (
+              <Text style={[styles.ingFoodMacroText, { color: Colors.proteinRing }]}>{macros.protein}g P</Text>
             )}
-            {ing.carbs > 0 && (
+            {macros.carbs > 0 && (
               <View style={styles.ingFoodMacroDot} />
             )}
-            {ing.carbs > 0 && (
-              <Text style={[styles.ingFoodMacroText, { color: Colors.carbsRing }]}>{ing.carbs}g C</Text>
+            {macros.carbs > 0 && (
+              <Text style={[styles.ingFoodMacroText, { color: Colors.carbsRing }]}>{macros.carbs}g C</Text>
             )}
-            {ing.fat > 0 && (
+            {macros.fat > 0 && (
               <View style={styles.ingFoodMacroDot} />
             )}
-            {ing.fat > 0 && (
-              <Text style={[styles.ingFoodMacroText, { color: Colors.fatRing }]}>{ing.fat}g F</Text>
+            {macros.fat > 0 && (
+              <Text style={[styles.ingFoodMacroText, { color: Colors.fatRing }]}>{macros.fat}g F</Text>
             )}
           </View>
         )}
       </View>
-      <TouchableOpacity style={styles.ingFoodAddBtn} activeOpacity={0.7}>
-        <Plus size={14} color={Colors.textSecondary} strokeWidth={2.5} />
-      </TouchableOpacity>
     </View>
   );
+}
+
+function formatServingsDisplay(n) {
+  if (!Number.isFinite(n)) return '1';
+  const r = Math.round(n * 10) / 10;
+  if (Math.abs(r - Math.round(r)) < 1e-6) return String(Math.round(r));
+  return String(r);
 }
 
 function IngredientsTab({ recipe, servings, onServingsChange, loadingDetail }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
+
+  const baseServings = getRecipeBaseServings(recipe);
+  const scaleFactor = baseServings > 0 ? servings / baseServings : 1;
+  const minServings = 0.5;
+  const dec = () => onServingsChange(Math.max(minServings, Math.round((servings - 0.5) * 2) / 2));
+  const inc = () => onServingsChange(Math.round((servings + 0.5) * 2) / 2);
 
   return (
     <View style={styles.tabContent}>
@@ -113,16 +135,17 @@ function IngredientsTab({ recipe, servings, onServingsChange, loadingDetail }) {
         <Text style={styles.servingLabel}>Servings</Text>
         <View style={styles.servingControl}>
           <TouchableOpacity
-            style={styles.servingSmBtn}
-            onPress={() => onServingsChange(Math.max(1, servings - 1))}
+            style={[styles.servingSmBtn, servings <= minServings && styles.servingSmBtnDisabled]}
+            onPress={dec}
             activeOpacity={0.7}
+            disabled={servings <= minServings}
           >
             <Text style={styles.servingSmBtnText}>−</Text>
           </TouchableOpacity>
-          <Text style={styles.servingSmValue}>{servings}</Text>
+          <Text style={styles.servingSmValue}>{formatServingsDisplay(servings)}</Text>
           <TouchableOpacity
             style={styles.servingSmBtn}
-            onPress={() => onServingsChange(servings + 1)}
+            onPress={inc}
             activeOpacity={0.7}
           >
             <Text style={styles.servingSmBtnText}>+</Text>
@@ -141,11 +164,8 @@ function IngredientsTab({ recipe, servings, onServingsChange, loadingDetail }) {
         </View>
       ) : (
         <>
-          <Text style={styles.ingredientsSectionLabel}>
-            {recipe.ingredients.length} ingredient{recipe.ingredients.length !== 1 ? 's' : ''}
-          </Text>
           {recipe.ingredients.map((ing, i) => (
-            <IngredientFoodCard key={i} ing={ing} index={i} />
+            <IngredientFoodCard key={i} ing={ing} index={i} scaleFactor={scaleFactor} />
           ))}
         </>
       )}
@@ -159,19 +179,6 @@ function InstructionsTab({ recipe, loadingDetail }) {
 
   return (
     <View style={styles.tabContent}>
-      <View style={styles.cookModeRow}>
-        <View style={styles.cookModeLeft}>
-          <ChefHat size={20} color={Colors.primary} />
-          <View style={{ marginLeft: 10 }}>
-            <Text style={styles.cookModeTitle}>Smart Cook Mode</Text>
-            <Text style={styles.cookModeSubtitle}>Keep screen on while cooking</Text>
-          </View>
-        </View>
-        <TouchableOpacity style={styles.cookModeBtn} activeOpacity={0.8}>
-          <Text style={styles.cookModeBtnText}>Start</Text>
-        </TouchableOpacity>
-      </View>
-
       <View style={styles.timingRow}>
         <StatPill icon={<Clock size={14} color={Colors.textTertiary} />} label={`Prep ${recipe.prepTime || 0}m`} />
         <StatPill icon={<Clock size={14} color={Colors.textTertiary} />} label={`Cook ${recipe.cookTime || 0}m`} />
@@ -245,12 +252,20 @@ export default function RecipeDetailScreen({ recipe, onBack, loadingDetail, onDe
   const { isRecipeSaved, toggleSaveRecipe } = useSavedRecipes();
 
   const [detailTab, setDetailTab] = useState('Ingredients');
-  const [servings, setServings] = useState(recipe?.servings || 1);
+  const [servings, setServings] = useState(() =>
+    Math.max(0.5, Number(recipe?.servings) || 1),
+  );
   const [addSheetOpen, setAddSheetOpen] = useState(false);
   const [toastVisible, setToastVisible] = useState(false);
 
+  useEffect(() => {
+    if (!recipe?.id) return;
+    setServings(Math.max(0.5, Number(recipe.servings) || 1));
+  }, [recipe?.id, recipe?.servings]);
+
   if (!recipe) return null;
 
+  const descriptionDisplay = stripSavesSnippetFromDescription(recipe.description);
   const saved = isRecipeSaved(recipe.id);
 
   const handleSave = async () => {
@@ -272,7 +287,7 @@ export default function RecipeDetailScreen({ recipe, onBack, loadingDetail, onDe
       const perServingFat = nps.fat || recipe.fat || 0;
       const srvCount = entry.servings || 1;
 
-      const totalGrams = (recipe.totalGrams || 100) * srvCount / (recipe.servings || 1);
+      const totalGrams = (recipe.totalGrams || 100) * srvCount / getRecipeBaseServings(recipe);
       const per100gKcal = totalGrams > 0 ? (perServingKcal * srvCount * 100) / totalGrams : 0;
       const per100gProtein = totalGrams > 0 ? (perServingProtein * srvCount * 100) / totalGrams : 0;
       const per100gCarbs = totalGrams > 0 ? (perServingCarbs * srvCount * 100) / totalGrams : 0;
@@ -345,51 +360,20 @@ export default function RecipeDetailScreen({ recipe, onBack, loadingDetail, onDe
                   strokeWidth={2}
                 />
               </TouchableOpacity>
-              <TouchableOpacity style={styles.actionBtn} activeOpacity={0.8}>
-                <Share2 size={20} color="#FFFFFF" strokeWidth={2} />
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          <View style={styles.imageMeta}>
-            <View style={styles.categoryBadge}>
-              <Text style={styles.categoryBadgeText}>{recipe.category || 'Recipe'}</Text>
-            </View>
-            <View style={styles.imageStats}>
-              <View style={styles.imageStat}>
-                <Clock size={13} color="rgba(255,255,255,0.9)" />
-                <Text style={styles.imageStatText}>{recipe.cookTime ?? recipe.cookTimeMinutes ?? 0}m</Text>
-              </View>
-              <View style={styles.imageStat}>
-                <Zap size={13} color="rgba(255,255,255,0.9)" />
-                <Text style={styles.imageStatText}>{recipe.nutritionPerServing?.kcal ?? recipe.calories ?? 0} kcal</Text>
-              </View>
             </View>
           </View>
         </View>
 
         <View style={styles.bodyPad}>
-          <View style={styles.authorRow}>
-            <Text style={styles.authorText}>{recipe.author || recipe.source === 'fatsecret' ? 'FatSecret' : ''}</Text>
-            <View style={styles.ratingRow}>
-              <Star size={13} color={Colors.streakGold} fill={Colors.streakGold} />
-              <Text style={styles.ratingText}>{recipe.rating || '—'}</Text>
-            </View>
-          </View>
-
           <Text style={styles.recipeTitle}>{recipe.name}</Text>
-          <Text style={styles.recipeDescription}>{recipe.description}</Text>
+          {descriptionDisplay ? (
+            <Text style={styles.recipeDescription}>{descriptionDisplay}</Text>
+          ) : null}
 
           <View style={styles.engagementRow}>
-            {recipe.saves != null && (
-              <View style={styles.engagementItem}>
-                <Heart size={15} color={Colors.textTertiary} />
-                <Text style={styles.engagementText}>{(recipe.saves || 0).toLocaleString()} saves</Text>
-              </View>
-            )}
             <View style={styles.engagementItem}>
               <Users size={15} color={Colors.textTertiary} />
-              <Text style={styles.engagementText}>{recipe.servings || 1} servings</Text>
+              <Text style={styles.engagementText}>{getRecipeBaseServings(recipe)} servings</Text>
             </View>
           </View>
 
@@ -499,53 +483,7 @@ const createStyles = (Colors) => StyleSheet.create({
     justifyContent: 'center',
     backdropFilter: 'blur(10px)',
   },
-  imageMeta: {
-    position: 'absolute',
-    bottom: 16,
-    left: 16,
-    right: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  categoryBadge: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.3)',
-  },
-  categoryBadgeText: {
-    fontSize: 13,
-    fontFamily: 'PlusJakartaSans-SemiBold',
-    color: Colors.textWhite,
-  },
-  imageStats: { flexDirection: 'row', gap: 10 },
-  imageStat: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  imageStatText: {
-    fontSize: 13,
-    fontFamily: 'PlusJakartaSans-SemiBold',
-    color: 'rgba(255,255,255,0.9)',
-  },
-  bodyPad: { padding: 20 },
-  authorRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  authorText: {
-    fontSize: 13,
-    fontFamily: 'PlusJakartaSans-Medium',
-    color: Colors.textTertiary,
-  },
-  ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  ratingText: {
-    fontSize: 13,
-    fontFamily: 'PlusJakartaSans-SemiBold',
-    color: Colors.textSecondary,
-  },
+  bodyPad: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 20 },
   recipeTitle: {
     fontSize: 26,
     fontFamily: 'PlusJakartaSans-Bold',
@@ -705,6 +643,7 @@ const createStyles = (Colors) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  servingSmBtnDisabled: { opacity: 0.35 },
   servingSmBtnText: {
     fontSize: 20,
     color: Colors.textPrimary,
@@ -751,40 +690,6 @@ const createStyles = (Colors) => StyleSheet.create({
     fontSize: 14,
     fontFamily: 'PlusJakartaSans-Medium',
     color: Colors.textTertiary,
-  },
-  cookModeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: Colors.primaryLight,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: Colors.primary + '30',
-  },
-  cookModeLeft: { flexDirection: 'row', alignItems: 'center' },
-  cookModeTitle: {
-    fontSize: 15,
-    fontFamily: 'PlusJakartaSans-Bold',
-    color: Colors.primaryDark,
-  },
-  cookModeSubtitle: {
-    fontSize: 12,
-    fontFamily: 'PlusJakartaSans-Regular',
-    color: Colors.primary,
-    marginTop: 2,
-  },
-  cookModeBtn: {
-    backgroundColor: Colors.primary,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 12,
-  },
-  cookModeBtnText: {
-    fontSize: 14,
-    fontFamily: 'PlusJakartaSans-Bold',
-    color: Colors.onPrimary,
   },
   stepCard: {
     flexDirection: 'row',
@@ -962,14 +867,6 @@ const createStyles = (Colors) => StyleSheet.create({
     fontFamily: 'PlusJakartaSans-Medium',
     color: Colors.textTertiary,
   },
-  ingredientsSectionLabel: {
-    fontSize: 13,
-    fontFamily: 'PlusJakartaSans-SemiBold',
-    color: Colors.textTertiary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    marginBottom: 10,
-  },
   ingFoodCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1037,16 +934,5 @@ const createStyles = (Colors) => StyleSheet.create({
     height: 3,
     borderRadius: 1.5,
     backgroundColor: Colors.border,
-  },
-  ingFoodAddBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: Colors.background,
-    borderWidth: 1.5,
-    borderColor: Colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
   },
 });

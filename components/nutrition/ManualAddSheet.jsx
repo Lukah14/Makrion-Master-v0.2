@@ -9,18 +9,17 @@ import { useTheme } from '@/context/ThemeContext';
 
 const MEALS = ['Breakfast', 'Lunch', 'Dinner', 'Snack'];
 
-function NutrientRow({ label, value, onChange, unit = 'g', required, indent }) {
+function NutrientRow({ label, value, onChange, unit = 'g', required }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
 
   return (
-    <View style={[styles.nutrientRow, indent && styles.nutrientRowIndent]}>
-      <Text style={[styles.nutrientLabel, indent && styles.nutrientLabelSub]}>
-        {indent && <Text style={styles.indent}>  </Text>}
+    <View style={styles.nutrientRow}>
+      <Text style={styles.nutrientLabel}>
         {label}
-        {required && <Text style={styles.req}>*</Text>}
+        {required ? <Text style={styles.req}>*</Text> : null}
       </Text>
-      <View style={[styles.nutrientInputWrap, indent && styles.nutrientInputWrapSub]}>
+      <View style={styles.nutrientInputWrap}>
         <TextInput
           style={styles.nutrientInput}
           placeholder="0"
@@ -37,11 +36,33 @@ function NutrientRow({ label, value, onChange, unit = 'g', required, indent }) {
 }
 
 const INITIAL = {
-  name: '', calories: '',
-  protein: '', carbs: '', fiber: '', sugars: '',
-  fat: '', saturatedFat: '', transFat: '',
+  name: '',
+  calories: '',
+  protein: '',
+  carbs: '',
+  fat: '',
+  fiber: '',
+  sugars: '',
   sodium: '',
 };
+
+function parseRequiredNonNeg(raw, label) {
+  const t = String(raw ?? '').trim();
+  if (t === '') return { ok: false, message: `${label} is required.` };
+  const n = parseFloat(t.replace(',', '.'));
+  if (!Number.isFinite(n)) return { ok: false, message: `${label} must be a number.` };
+  if (n < 0) return { ok: false, message: `${label} cannot be negative.` };
+  return { ok: true, value: n };
+}
+
+function parseOptionalNonNeg(raw) {
+  const t = String(raw ?? '').trim();
+  if (t === '') return { ok: true, value: 0 };
+  const n = parseFloat(t.replace(',', '.'));
+  if (!Number.isFinite(n)) return { ok: false, message: 'Optional nutrients must be valid numbers.' };
+  if (n < 0) return { ok: false, message: 'Values cannot be negative.' };
+  return { ok: true, value: n };
+}
 
 export default function ManualAddSheet({ visible, onAdd, onClose }) {
   const { colors: Colors } = useTheme();
@@ -57,8 +78,25 @@ export default function ManualAddSheet({ visible, onAdd, onClose }) {
     if (error) setError('');
   };
 
-  const calNum = parseFloat(form.calories);
-  const isValid = Number.isFinite(calNum) && calNum >= 0 && mealType;
+  const nameOk = form.name.trim().length > 0;
+  const calR = parseRequiredNonNeg(form.calories, 'Calories');
+  const protR = parseRequiredNonNeg(form.protein, 'Protein');
+  const carbR = parseRequiredNonNeg(form.carbs, 'Carbs');
+  const fatR = parseRequiredNonNeg(form.fat, 'Fat');
+  const fiberR = parseOptionalNonNeg(form.fiber);
+  const sugarR = parseOptionalNonNeg(form.sugars);
+  const saltR = parseOptionalNonNeg(form.sodium);
+
+  const isValid =
+    nameOk &&
+    calR.ok &&
+    protR.ok &&
+    carbR.ok &&
+    fatR.ok &&
+    fiberR.ok &&
+    sugarR.ok &&
+    saltR.ok &&
+    Boolean(mealType);
 
   const reset = () => {
     setForm(INITIAL);
@@ -70,27 +108,31 @@ export default function ManualAddSheet({ visible, onAdd, onClose }) {
   const handleClose = () => { reset(); onClose(); };
 
   const handleAdd = async () => {
-    if (!isValid) { setError('Enter a valid calorie amount'); return; }
+    if (!form.name.trim()) {
+      setError('Enter a food name.');
+      return;
+    }
+    if (!calR.ok) { setError(calR.message); return; }
+    if (!protR.ok) { setError(protR.message); return; }
+    if (!carbR.ok) { setError(carbR.message); return; }
+    if (!fatR.ok) { setError(fatR.message); return; }
+    if (!fiberR.ok) { setError(fiberR.message); return; }
+    if (!sugarR.ok) { setError(sugarR.message); return; }
+    if (!saltR.ok) { setError(saltR.message); return; }
+
     setError('');
     setSaving(true);
 
-    const opt = (v) => {
-      const n = parseFloat(v);
-      return Number.isFinite(n) && n >= 0 ? n : 0;
-    };
-
     try {
       await onAdd({
-        name: form.name.trim() || 'Quick entry',
-        calories: Math.round(calNum),
-        protein: opt(form.protein),
-        carbs: opt(form.carbs),
-        fiber: opt(form.fiber),
-        sugars: opt(form.sugars),
-        fat: opt(form.fat),
-        saturatedFat: opt(form.saturatedFat),
-        transFat: opt(form.transFat),
-        sodium: opt(form.sodium),
+        name: form.name.trim(),
+        calories: Math.round(calR.value),
+        protein: Math.round(protR.value * 10) / 10,
+        carbs: Math.round(carbR.value * 10) / 10,
+        fat: Math.round(fatR.value * 10) / 10,
+        fiber: Math.round(fiberR.value * 10) / 10,
+        sugars: Math.round(sugarR.value * 10) / 10,
+        sodium: Math.round(saltR.value * 10) / 10,
         mealType: mealType.toLowerCase(),
       });
       reset();
@@ -123,12 +165,15 @@ export default function ManualAddSheet({ visible, onAdd, onClose }) {
               keyboardShouldPersistTaps="handled"
               contentContainerStyle={styles.scrollInner}
             >
-              {/* Name */}
+              <Text style={styles.hint}>
+                Enter totals for this log item — no serving size needed.
+              </Text>
+
               <View style={styles.field}>
-                <Text style={styles.fieldLabel}>Name</Text>
+                <Text style={styles.fieldLabel}>Name<Text style={styles.req}>*</Text></Text>
                 <TextInput
                   style={styles.input}
-                  placeholder="e.g. Lunch snack"
+                  placeholder="e.g. Homemade sandwich"
                   placeholderTextColor={Colors.textTertiary}
                   value={form.name}
                   onChangeText={set('name')}
@@ -137,7 +182,6 @@ export default function ManualAddSheet({ visible, onAdd, onClose }) {
                 />
               </View>
 
-              {/* Calories — prominent */}
               <View style={styles.calorieField}>
                 <Text style={styles.calorieLabel}>Calories<Text style={styles.req}>*</Text></Text>
                 <View style={styles.calorieInputWrap}>
@@ -154,22 +198,20 @@ export default function ManualAddSheet({ visible, onAdd, onClose }) {
                 </View>
               </View>
 
-              {/* Nutrition table */}
               <View style={styles.nutrientsCard}>
-                <NutrientRow label="Protein"           value={form.protein}      onChange={set('protein')} />
+                <NutrientRow label="Protein" value={form.protein} onChange={set('protein')} required />
                 <View style={styles.divider} />
-                <NutrientRow label="Total Carbohydrate" value={form.carbs}       onChange={set('carbs')} />
-                <NutrientRow label="Dietary Fiber"      value={form.fiber}       onChange={set('fiber')} indent />
-                <NutrientRow label="Sugars"             value={form.sugars}      onChange={set('sugars')} indent />
+                <NutrientRow label="Carbs" value={form.carbs} onChange={set('carbs')} required />
                 <View style={styles.divider} />
-                <NutrientRow label="Total Fat"          value={form.fat}         onChange={set('fat')} />
-                <NutrientRow label="Saturated Fat"      value={form.saturatedFat} onChange={set('saturatedFat')} indent />
-                <NutrientRow label="Trans Fat"          value={form.transFat}    onChange={set('transFat')} indent />
+                <NutrientRow label="Fat" value={form.fat} onChange={set('fat')} required />
                 <View style={styles.divider} />
-                <NutrientRow label="Sodium"             value={form.sodium}      onChange={set('sodium')} unit="mg" />
+                <NutrientRow label="Fiber" value={form.fiber} onChange={set('fiber')} />
+                <View style={styles.divider} />
+                <NutrientRow label="Sugar" value={form.sugars} onChange={set('sugars')} />
+                <View style={styles.divider} />
+                <NutrientRow label="Salt" value={form.sodium} onChange={set('sodium')} unit="mg" />
               </View>
 
-              {/* Meal selector */}
               <View style={styles.mealSection}>
                 <Text style={styles.mealLabel}>Add to<Text style={styles.req}>*</Text></Text>
                 <View style={styles.mealChips}>
@@ -246,6 +288,13 @@ const createStyles = (Colors) => StyleSheet.create({
   scrollInner: {
     paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12,
   },
+  hint: {
+    fontSize: 13,
+    fontFamily: 'PlusJakartaSans-Regular',
+    color: Colors.textTertiary,
+    marginBottom: 16,
+    lineHeight: 18,
+  },
 
   field: { marginBottom: 20 },
   fieldLabel: {
@@ -299,22 +348,11 @@ const createStyles = (Colors) => StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 11,
   },
-  nutrientRowIndent: {
-    paddingLeft: 36,
-  },
   nutrientLabel: {
     fontSize: 15,
     fontFamily: 'PlusJakartaSans-SemiBold',
     color: Colors.textPrimary,
     flex: 1,
-  },
-  nutrientLabelSub: {
-    fontFamily: 'PlusJakartaSans-Regular',
-    color: Colors.textSecondary,
-    fontSize: 14,
-  },
-  indent: {
-    color: 'transparent',
   },
   nutrientInputWrap: {
     flexDirection: 'row',
@@ -325,9 +363,6 @@ const createStyles = (Colors) => StyleSheet.create({
     borderColor: Colors.border,
     paddingHorizontal: 10,
     width: 100,
-  },
-  nutrientInputWrapSub: {
-    width: 90,
   },
   nutrientInput: {
     flex: 1,
@@ -342,7 +377,7 @@ const createStyles = (Colors) => StyleSheet.create({
     fontFamily: 'PlusJakartaSans-Medium',
     color: Colors.textTertiary,
     marginLeft: 4,
-    width: 20,
+    width: 24,
   },
 
   mealSection: { marginBottom: 16 },

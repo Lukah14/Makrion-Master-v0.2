@@ -9,7 +9,7 @@ import {
   signInWithPopup,
 } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
-import { createUserDocument } from './userService';
+import { createUserDocument, ensureUserDocument } from './userService';
 
 export async function signUp(email, password, displayName) {
   const credential = await createUserWithEmailAndPassword(auth, email, password);
@@ -22,6 +22,7 @@ export async function signUp(email, password, displayName) {
 
 export async function signIn(email, password) {
   const credential = await signInWithEmailAndPassword(auth, email, password);
+  await ensureUserDocument(credential.user);
   return credential.user;
 }
 
@@ -38,7 +39,7 @@ export async function signInWithGoogle() {
   provider.addScope('profile');
   provider.addScope('email');
   const credential = await signInWithPopup(auth, provider);
-  await createUserDocument(credential.user, {});
+  await ensureUserDocument(credential.user);
   return credential.user;
 }
 

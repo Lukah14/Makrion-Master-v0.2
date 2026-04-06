@@ -16,6 +16,7 @@ import { ChevronLeft, Search, X } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import { Layout } from '@/constants/layout';
 import { listActiveExerciseDefinitions } from '@/services/exerciseDefinitionService';
+import { filterValidExerciseDefinitions } from '@/lib/exerciseNormalize';
 
 function DetailRow({ label, value, styles }) {
   return (
@@ -58,11 +59,17 @@ export default function FirestoreExercisePickerModal({ visible, onClose, onPick 
     loadAll();
   }, [visible, loadAll]);
 
+  const validExercises = useMemo(() => filterValidExerciseDefinitions(all), [all]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return all;
-    return all.filter((row) => row.name.toLowerCase().includes(q));
-  }, [all, query]);
+    if (!q) return validExercises;
+    return validExercises.filter((row) =>
+      String(row.name ?? '')
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [validExercises, query]);
 
   const handlePick = () => {
     if (!selected) return;
@@ -126,8 +133,8 @@ export default function FirestoreExercisePickerModal({ visible, onClose, onPick 
                   ListEmptyComponent={
                     !loading ? (
                       <Text style={styles.empty}>
-                        {all.length === 0
-                          ? 'No exercises in Firestore yet. Seed the exercises collection (see scripts/seed-exercises.mjs).'
+                        {validExercises.length === 0
+                          ? 'No exercises available.'
                           : 'No matches. Try another search.'}
                       </Text>
                     ) : null

@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import {
   ScrollView, View, Text, TouchableOpacity,
-  StyleSheet, Platform, Alert,
+  StyleSheet, Platform, Alert, Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { User, Target, Scale, History, Sun, Mail, Trash2, LogOut, ChevronRight } from 'lucide-react-native';
 import { Layout } from '@/constants/layout';
 import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/context/AuthContext';
+import { useUser } from '@/hooks/useUser';
 import { signOutUser } from '@/services/authService';
 import AppearanceSheet from '@/components/settings/AppearanceSheet';
 
@@ -59,13 +61,16 @@ function SettingsRow({ icon, iconBg, label, subtitle, onPress, right, showDivide
 const APPEARANCE_LABELS = { light: 'Light', dark: 'Dark', system: 'System' };
 
 export default function SettingsScreen() {
-  const { colors: Colors, preference: appearance, setPreference: setAppearance } = useTheme();
+  const router = useRouter();
+  const { colors: Colors, preference: appearance, setPreference } = useTheme();
   const { user } = useAuth();
+  const { userData, patchUser } = useUser();
   const styles = createStyles(Colors);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
 
-  const displayName = user?.displayName || 'User';
-  const displayEmail = user?.email || '';
+  const displayName = (userData?.displayName || user?.displayName || '').trim() || 'User';
+  const displayEmail = (userData?.email || user?.email || '').trim();
+  const photoUrl = userData?.photoURL || user?.photoURL;
 
   const handleDeleteAccount = () => {
     Alert.alert(
@@ -74,7 +79,7 @@ export default function SettingsScreen() {
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Delete', style: 'destructive', onPress: () => {} },
-      ]
+      ],
     );
   };
 
@@ -91,6 +96,17 @@ export default function SettingsScreen() {
     ]);
   };
 
+  const handleAppearancePick = async (key) => {
+    await setPreference(key);
+    if (user?.uid) {
+      try {
+        await patchUser({ preferences: { appearance: key } });
+      } catch {
+        /* still applied locally */
+      }
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <ScrollView
@@ -101,12 +117,16 @@ export default function SettingsScreen() {
         <Text style={styles.screenTitle}>Settings</Text>
 
         <View style={styles.profileCard}>
-          <View style={styles.avatarPlaceholder}>
-            <User size={22} color={Colors.textTertiary} />
-          </View>
+          {photoUrl ? (
+            <Image source={{ uri: photoUrl }} style={styles.avatar} />
+          ) : (
+            <View style={styles.avatarPlaceholder}>
+              <User size={22} color={Colors.textTertiary} />
+            </View>
+          )}
           <View style={styles.profileInfo}>
             <Text style={styles.profileName}>{displayName}</Text>
-            <Text style={styles.profileMeta}>{displayEmail}</Text>
+            {displayEmail ? <Text style={styles.profileMeta}>{displayEmail}</Text> : null}
           </View>
         </View>
 
@@ -117,28 +137,28 @@ export default function SettingsScreen() {
             iconBg="#1A1A2E"
             label="Personal details"
             subtitle="Name, age, height, weight"
-            onPress={() => {}}
+            onPress={() => router.push('/(settings)/personal')}
           />
           <SettingsRow
             icon={<Target size={16} color="#FFFFFF" />}
             iconBg="#2DA89E"
             label="Edit nutrition goals"
             subtitle="Calories, macros & targets"
-            onPress={() => {}}
+            onPress={() => router.push('/(settings)/nutrition-goals')}
           />
           <SettingsRow
             icon={<Scale size={16} color="#FFFFFF" />}
             iconBg="#4A9BD9"
             label="Goals & current weight"
             subtitle="Track your weight goal"
-            onPress={() => {}}
+            onPress={() => router.push('/(settings)/goals-weight')}
           />
           <SettingsRow
             icon={<History size={16} color="#FFFFFF" />}
             iconBg="#F5A623"
             label="Weight history"
             subtitle="View all weigh-ins"
-            onPress={() => {}}
+            onPress={() => router.push('/(settings)/weight-history')}
             showDivider={false}
           />
         </SettingsCard>
@@ -153,7 +173,7 @@ export default function SettingsScreen() {
             onPress={() => setAppearanceOpen(true)}
             showDivider={false}
             right={
-              <Text style={styles.metaValue}>{APPEARANCE_LABELS[appearance]}</Text>
+              <Text style={styles.metaValue}>{APPEARANCE_LABELS[appearance] || 'Light'}</Text>
             }
           />
         </SettingsCard>
@@ -164,7 +184,7 @@ export default function SettingsScreen() {
             icon={<Mail size={16} color="#FFFFFF" />}
             iconBg="#2DA89E"
             label="Account Email"
-            subtitle={displayEmail}
+            subtitle={displayEmail || '—'}
           />
           <SettingsRow
             icon={<Trash2 size={16} color="#FFFFFF" />}
@@ -190,7 +210,7 @@ export default function SettingsScreen() {
       <AppearanceSheet
         visible={appearanceOpen}
         current={appearance}
-        onChange={setAppearance}
+        onChange={handleAppearancePick}
         onClose={() => setAppearanceOpen(false)}
       />
     </SafeAreaView>

@@ -1,72 +1,143 @@
-import { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
+import { useRouter } from 'expo-router';
 import { ChevronRight, Check } from 'lucide-react-native';
 import Card from '@/components/common/Card';
 import { useTheme } from '@/context/ThemeContext';
 import { habitIconMap, getIconForCategory } from '@/components/habits/habitIconMap';
+import { normalizeNumericConditionType, NUMERIC_CONDITION, habitCountsTowardDailyCompletion } from '@/lib/habitNumericCondition';
 
-const INITIAL_HABITS = [
-  { id: '1', name: 'Drink 2.5L Water', iconName: 'plus', completed: true, color: '#FFFFFF', bg: '#84CC16', category: 'Health' },
-  { id: '2', name: '10,000 Steps', iconName: 'footprints', completed: false, color: '#FFFFFF', bg: '#8B5CF6', category: 'Movement' },
-  { id: '3', name: 'Healthy Breakfast', iconName: 'utensils', completed: true, color: '#FFFFFF', bg: '#F59E0B', category: 'Nutrition' },
-  { id: '4', name: 'Workout 45 min', iconName: 'footprints', completed: false, color: '#FFFFFF', bg: '#8B5CF6', category: 'Movement' },
-  { id: '5', name: 'Meditate 10 min', iconName: 'brain', completed: false, color: '#FFFFFF', bg: '#EC4899', category: 'Mind' },
-];
+function habitProgressLine(h) {
+  if (h.type === 'numeric') {
+    const cur = h.current;
+    const tgt = h.target;
+    const cond = normalizeNumericConditionType(h);
+    if (cond === NUMERIC_CONDITION.ANY_VALUE) {
+      return h.numericDayHasEntry && cur != null ? `${cur}` : '—';
+    }
+    if (tgt != null) return `${cur ?? 0} / ${tgt}`;
+    return `${cur ?? 0}`;
+  }
+  if (h.type === 'timer') {
+    const u = h.unit || 'min';
+    return `${Math.round(h.current || 0)} / ${Math.round(h.target || 0)} ${u}`;
+  }
+  if (h.type === 'checklist') {
+    return `${h.current ?? 0} / ${h.target ?? 0} tasks`;
+  }
+  return null;
+}
 
-function HabitRow({ habit, onToggle }) {
+function HabitRow({ habit, onPress }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
+  const line = habitProgressLine(habit);
+  const isAnyValue =
+    habit.type === 'numeric' && normalizeNumericConditionType(habit) === NUMERIC_CONDITION.ANY_VALUE;
 
   return (
     <TouchableOpacity
       style={styles.habitRow}
-      onPress={() => onToggle(habit.id)}
+      onPress={() => onPress(habit)}
       activeOpacity={0.7}
     >
-      <View style={[styles.habitIconWrap, { backgroundColor: habit.bg }]}>
+      <View style={[styles.habitIconWrap, { backgroundColor: habit.iconBg || '#8B5CF6' }]}>
         {(() => {
           const IconComp = (habit.iconName && habitIconMap[habit.iconName]) || getIconForCategory(habit.category);
-          return <IconComp size={17} color={habit.color || '#FFFFFF'} />;
+          return <IconComp size={17} color={habit.iconColor || '#FFFFFF'} />;
         })()}
       </View>
 
-      <Text style={[styles.habitName, habit.completed && styles.habitNameDone]} numberOfLines={1}>
-        {habit.name}
-      </Text>
-
-      <View style={[styles.checkCircle, habit.completed && { backgroundColor: habit.bg, borderColor: habit.bg }]}>
-        {habit.completed && <Check size={13} color="#FFFFFF" strokeWidth={3} />}
+      <View style={styles.habitTextCol}>
+        <Text style={[styles.habitName, !isAnyValue && habit.completed && styles.habitNameDone]} numberOfLines={1}>
+          {habit.name}
+        </Text>
+        {!isAnyValue && line ? <Text style={styles.habitMeta}>{line}</Text> : null}
       </View>
+
+      {isAnyValue ? (
+        <Text style={styles.valueOnly}>{line || '—'}</Text>
+      ) : (
+        <View style={[styles.checkCircle, habit.completed && { backgroundColor: habit.iconBg || '#8B5CF6', borderColor: habit.iconBg || '#8B5CF6' }]}>
+          {habit.completed && <Check size={13} color="#FFFFFF" strokeWidth={3} />}
+        </View>
+      )}
     </TouchableOpacity>
   );
 }
 
-export default function HabitsSummary({ habits: propHabits }) {
+/**
+ * @param {{
+ *   habits: any[],
+ *   loading?: boolean,
+ *   error?: string|null,
+ *   dateLabel?: string,
+ *   onHabitPress: (habit: any) => void,
+ * }} props
+ */
+export default function HabitsSummary({ habits, loading, error, dateLabel, onHabitPress }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
-  const [habits, setHabits] = useState(INITIAL_HABITS);
+  const router = useRouter();
 
-  const toggle = (id) => {
-    setHabits((prev) =>
-      prev.map((h) => (h.id === id ? { ...h, completed: !h.completed } : h))
+  if (loading) {
+    return (
+      <Card>
+        <View style={styles.centerBox}>
+          <ActivityIndicator size="small" color={Colors.primary} />
+          <Text style={styles.centerText}>Loading habits…</Text>
+        </View>
+      </Card>
     );
-  };
+  }
 
-  const completed = habits.filter((h) => h.completed).length;
-  const total = habits.length;
-  const progress = completed / total;
-  const allDone = completed === total;
+  if (error) {
+    return (
+      <Card>
+        <Text style={styles.errorTitle}>Could not load habits</Text>
+        <Text style={styles.errorSub}>{error}</Text>
+      </Card>
+    );
+  }
+
+  if (!habits.length) {
+    return (
+      <Card>
+        <Text style={styles.title}>Habits</Text>
+        {dateLabel ? <Text style={styles.subtitle}>{dateLabel}</Text> : null}
+        <Text style={styles.emptyText}>No habits scheduled for this day.</Text>
+        <TouchableOpacity style={styles.linkBtn} onPress={() => router.push('/(tabs)/habits')} activeOpacity={0.7}>
+          <Text style={styles.linkBtnText}>Open Habit Tracker</Text>
+          <ChevronRight size={16} color={Colors.primary} />
+        </TouchableOpacity>
+      </Card>
+    );
+  }
+
+  const tallyHabits = habits.filter(habitCountsTowardDailyCompletion);
+  const completed = tallyHabits.filter((h) => h.completed).length;
+  const total = tallyHabits.length;
+  const progress = total ? completed / total : 0;
+  const allDone = total > 0 && completed === total;
 
   return (
     <Card>
       <View style={styles.header}>
         <View>
-          <Text style={styles.title}>Today's Habits</Text>
+          <Text style={styles.title}>Habits</Text>
           <Text style={styles.subtitle}>
-            {allDone ? 'All done for today!' : `${completed} of ${total} completed`}
+            {dateLabel ? `${dateLabel} · ` : ''}
+            {total === 0
+              ? `${habits.length} habit${habits.length === 1 ? '' : 's'} (value tracking only)`
+              : allDone
+                ? 'All done!'
+                : `${completed} of ${total} completed`}
           </Text>
         </View>
-        <TouchableOpacity style={styles.seeAllBtn} activeOpacity={0.7}>
+        <TouchableOpacity
+          style={styles.seeAllBtn}
+          activeOpacity={0.7}
+          onPress={() => router.push('/(tabs)/habits')}
+        >
           <Text style={styles.seeAllText}>See all</Text>
           <ChevronRight size={14} color={Colors.textTertiary} />
         </TouchableOpacity>
@@ -90,7 +161,7 @@ export default function HabitsSummary({ habits: propHabits }) {
       <View style={styles.habitList}>
         {habits.map((habit, i) => (
           <View key={habit.id}>
-            <HabitRow habit={habit} onToggle={toggle} />
+            <HabitRow habit={habit} onPress={onHabitPress} />
             {i < habits.length - 1 && <View style={styles.divider} />}
           </View>
         ))}
@@ -98,7 +169,7 @@ export default function HabitsSummary({ habits: propHabits }) {
 
       {allDone && (
         <View style={styles.successBanner}>
-          <Text style={styles.successText}>You crushed all your habits today!</Text>
+          <Text style={styles.successText}>You completed every habit for this day.</Text>
         </View>
       )}
     </Card>
@@ -106,6 +177,26 @@ export default function HabitsSummary({ habits: propHabits }) {
 }
 
 const createStyles = (Colors) => StyleSheet.create({
+  centerBox: {
+    paddingVertical: 20,
+    alignItems: 'center',
+    gap: 10,
+  },
+  centerText: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    fontFamily: 'PlusJakartaSans-Medium',
+  },
+  errorTitle: {
+    fontSize: 15,
+    fontFamily: 'PlusJakartaSans-SemiBold',
+    color: Colors.textPrimary,
+  },
+  errorSub: {
+    fontSize: 12,
+    color: Colors.textTertiary,
+    marginTop: 6,
+  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -122,6 +213,22 @@ const createStyles = (Colors) => StyleSheet.create({
     fontFamily: 'PlusJakartaSans-Regular',
     color: Colors.textTertiary,
     marginTop: 2,
+  },
+  emptyText: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    marginTop: 8,
+    marginBottom: 12,
+  },
+  linkBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  linkBtnText: {
+    fontSize: 14,
+    fontFamily: 'PlusJakartaSans-SemiBold',
+    color: Colors.primary,
   },
   seeAllBtn: {
     flexDirection: 'row',
@@ -175,11 +282,11 @@ const createStyles = (Colors) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  habitEmoji: {
-    fontSize: 17,
+  habitTextCol: {
+    flex: 1,
+    minWidth: 0,
   },
   habitName: {
-    flex: 1,
     fontSize: 15,
     fontFamily: 'PlusJakartaSans-Medium',
     color: Colors.textPrimary,
@@ -187,6 +294,18 @@ const createStyles = (Colors) => StyleSheet.create({
   habitNameDone: {
     color: Colors.textTertiary,
     textDecorationLine: 'line-through',
+  },
+  habitMeta: {
+    fontSize: 11,
+    color: Colors.textTertiary,
+    marginTop: 2,
+  },
+  valueOnly: {
+    minWidth: 36,
+    fontSize: 16,
+    fontFamily: 'PlusJakartaSans-Bold',
+    color: Colors.textPrimary,
+    textAlign: 'right',
   },
   checkCircle: {
     width: 26,

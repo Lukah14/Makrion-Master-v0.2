@@ -25,6 +25,7 @@ export default function TabLayout() {
   return (
     <NutritionDateProvider>
     <Tabs
+      initialRouteName="index"
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: colors.tabActive,

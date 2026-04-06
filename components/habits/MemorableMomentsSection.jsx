@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,14 +6,10 @@ import {
   TouchableOpacity,
   StyleSheet,
   ScrollView,
-  Modal,
-  Pressable,
   Alert,
-  KeyboardAvoidingView,
-  Platform,
+  ActivityIndicator,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Sparkles, Camera, Pencil, Trash2, X } from 'lucide-react-native';
+import { Sparkles, Camera, Trash2 } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import { Layout } from '@/constants/layout';
 import { motivationalQuotes } from '@/data/mockData';
@@ -49,198 +45,80 @@ function MoodRatingRow({ rating, onRatingChange }) {
   );
 }
 
-function confirmDeleteFromList(moment, onDeleteMoment) {
-  Alert.alert('Delete moment', 'This cannot be undone.', [
-    { text: 'Cancel', style: 'cancel' },
-    { text: 'Delete', style: 'destructive', onPress: () => onDeleteMoment?.(moment.id) },
-  ]);
-}
-
-function MomentEntry({ moment, onEdit, onDelete }) {
-  const { colors: Colors } = useTheme();
-  const styles = createStyles(Colors);
-  const bodyText = moment.text
-    ? moment.text
-    : moment.moodRating != null
-      ? `Mood: ${moment.moodRating}/10`
-      : '—';
-
-  return (
-    <View style={styles.entryCard}>
-      <View style={styles.entryRow}>
-        <Text style={styles.entryMood} numberOfLines={1}>
-          {moment.mood}
-        </Text>
-        <View style={styles.entryContent}>
-          <Text style={styles.entryText} numberOfLines={4} ellipsizeMode="tail">
-            {bodyText}
-          </Text>
-          <Text style={styles.entryDate} numberOfLines={2} ellipsizeMode="tail">
-            {moment.date}
-          </Text>
-        </View>
-        {moment.moodRating != null && !!moment.text?.trim() && (
-          <View style={styles.entryRatingBadge}>
-            <Text style={styles.entryRatingText} numberOfLines={1}>
-              {moment.moodRating}/10
-            </Text>
-          </View>
-        )}
-        <View style={styles.entryActions}>
-          <TouchableOpacity
-            style={styles.entryActionBtn}
-            onPress={() => onEdit(moment)}
-            hitSlop={8}
-            accessibilityLabel="Edit moment"
-          >
-            <Pencil size={18} color={Colors.textSecondary} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.entryActionBtn}
-            onPress={() => confirmDeleteFromList(moment, onDelete)}
-            hitSlop={8}
-            accessibilityLabel="Delete moment"
-          >
-            <Trash2 size={18} color={Colors.error} />
-          </TouchableOpacity>
-        </View>
-      </View>
-    </View>
-  );
-}
-
-function EditMomentModal({ visible, moment, onClose, onSave, onDelete }) {
-  const { colors: Colors } = useTheme();
-  const styles = createStyles(Colors);
-  const [note, setNote] = useState('');
-  const [rating, setRating] = useState(null);
-
-  useEffect(() => {
-    if (visible && moment) {
-      setNote(moment.text || '');
-      setRating(moment.moodRating ?? null);
-    }
-  }, [visible, moment?.id]);
-
-  const handleSavePress = async () => {
-    if (!moment) return;
-    if (!note.trim() && rating == null) {
-      Alert.alert('Moment empty', 'Add a note or pick a mood.');
-      return;
-    }
-    try {
-      await onSave(moment.id, { text: note, moodRating: rating });
-      onClose();
-    } catch {
-      // parent already showed Alert
-    }
-  };
-
-  const handleDeletePress = () => {
-    if (!moment) return;
-    Alert.alert('Delete moment', 'This cannot be undone.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await onDelete(moment.id);
-            onClose();
-          } catch {
-            // parent already showed Alert
-          }
-        },
-      },
-    ]);
-  };
-
-  if (!moment) return null;
-
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        style={styles.modalRoot}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <Pressable style={styles.modalOverlay} onPress={onClose}>
-          <Pressable style={styles.modalCard} onPress={() => {}}>
-            <SafeAreaView edges={['bottom']} style={styles.modalSafe}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Edit moment</Text>
-                <TouchableOpacity onPress={onClose} hitSlop={12} accessibilityLabel="Close">
-                  <X size={22} color={Colors.textSecondary} />
-                </TouchableOpacity>
-              </View>
-              <ScrollView
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-                style={styles.modalScroll}
-              >
-                <MoodRatingRow rating={rating} onRatingChange={setRating} />
-                <Text style={styles.sectionLabel}>NOTE</Text>
-                <View style={styles.noteInputWrapper}>
-                  <TextInput
-                    style={styles.noteInput}
-                    placeholder="Thought, win, or reflection..."
-                    placeholderTextColor={Colors.textTertiary}
-                    value={note}
-                    onChangeText={setNote}
-                    multiline
-                    textAlignVertical="top"
-                  />
-                </View>
-              </ScrollView>
-              <View style={styles.modalActions}>
-                <TouchableOpacity
-                  style={styles.modalDeleteBtn}
-                  onPress={handleDeletePress}
-                  activeOpacity={0.7}
-                >
-                  <Trash2 size={18} color={Colors.error} />
-                  <Text style={styles.modalDeleteText}>Delete</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.modalSaveBtn} onPress={handleSavePress} activeOpacity={0.85}>
-                  <Text style={styles.modalSaveText}>Save</Text>
-                </TouchableOpacity>
-              </View>
-            </SafeAreaView>
-          </Pressable>
-        </Pressable>
-      </KeyboardAvoidingView>
-    </Modal>
-  );
-}
-
 export default function MemorableMomentsSection({
-  moments,
-  onSaveMoment,
-  onUpdateMoment,
-  onDeleteMoment,
+  dateKey,
+  todayKey,
+  dailyMoment,
+  loading,
+  error,
+  onSave,
+  onClear,
 }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
   const [moodRating, setMoodRating] = useState(null);
   const [noteText, setNoteText] = useState('');
-  const [editing, setEditing] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  const isOtherDay = dateKey && todayKey && dateKey !== todayKey;
+  const noteSectionLabel = isOtherDay ? 'NOTE FOR THIS DAY' : "TODAY'S NOTE";
+
+  const syncKey = dailyMoment
+    ? `${dailyMoment.text ?? ''}|${dailyMoment.moodRating ?? ''}|${dailyMoment.photoUrl ?? ''}`
+    : '_empty';
+
+  useEffect(() => {
+    if (!dailyMoment) {
+      setNoteText('');
+      setMoodRating(null);
+      return;
+    }
+    setNoteText(dailyMoment.text || '');
+    setMoodRating(dailyMoment.moodRating ?? null);
+  }, [dateKey, syncKey]);
 
   const quoteIndex = new Date().getDate() % motivationalQuotes.length;
   const dailyQuote = motivationalQuotes[quoteIndex];
 
-  const handleSave = async () => {
-    if (!noteText.trim() && moodRating == null) return;
-    try {
-      await onSaveMoment?.({
-        text: noteText.trim(),
-        moodRating,
-        photoUrl: null,
-      });
-      setNoteText('');
-      setMoodRating(null);
-    } catch {
-      // parent shows Alert
+  const hasSavedNote = Boolean(
+    dailyMoment && ((dailyMoment.text && dailyMoment.text.trim()) || dailyMoment.moodRating != null),
+  );
+
+  const handleSave = useCallback(async () => {
+    if (!noteText.trim() && moodRating == null) {
+      Alert.alert('Add something', 'Write a note or choose a mood (or clear the day with Clear note).');
+      return;
     }
-  };
+    setSaving(true);
+    try {
+      await onSave?.({
+        text: noteText,
+        moodRating,
+        photoUrl: dailyMoment?.photoUrl ?? null,
+      });
+    } catch {
+      // parent Alert
+    } finally {
+      setSaving(false);
+    }
+  }, [noteText, moodRating, dailyMoment?.photoUrl, onSave]);
+
+  const handleClear = useCallback(() => {
+    Alert.alert("Clear this day's note?", 'This removes the saved note for the selected date.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Clear',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await onClear?.();
+          } catch {
+            Alert.alert('Could not clear', 'Try again.');
+          }
+        },
+      },
+    ]);
+  }, [onClear]);
 
   return (
     <View style={styles.container}>
@@ -249,17 +127,28 @@ export default function MemorableMomentsSection({
           <Sparkles size={24} color="#F5A623" />
           <View style={styles.headerText}>
             <Text style={styles.title}>Memorable Moments</Text>
-            <Text style={styles.subtitle}>Capture the best moment of your day</Text>
+            <Text style={styles.subtitle}>
+              One note per day — edit anytime. It stays here for this date.
+            </Text>
           </View>
         </View>
 
+        {loading ? (
+          <View style={styles.loadingRow}>
+            <ActivityIndicator color={Colors.primary} />
+            <Text style={styles.loadingText}>Loading note…</Text>
+          </View>
+        ) : null}
+
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
         <MoodRatingRow rating={moodRating} onRatingChange={setMoodRating} />
 
-        <Text style={styles.sectionLabel}>TODAY{"'"}S NOTE</Text>
+        <Text style={styles.sectionLabel}>{noteSectionLabel}</Text>
         <View style={styles.noteInputWrapper}>
           <TextInput
             style={styles.noteInput}
-            placeholder="What made today special? Write a thought, win, or reflection..."
+            placeholder="What made this day special? Thought, win, or reflection…"
             placeholderTextColor={Colors.textTertiary}
             value={noteText}
             onChangeText={setNoteText}
@@ -273,36 +162,31 @@ export default function MemorableMomentsSection({
             <Camera size={16} color={Colors.textSecondary} />
             <Text style={styles.photoBtnText}>Photo</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.saveBtn} onPress={handleSave} activeOpacity={0.8}>
-            <Text style={styles.saveBtnText}>Save moment</Text>
+          <TouchableOpacity
+            style={[styles.saveBtn, saving && styles.saveBtnDisabled]}
+            onPress={handleSave}
+            activeOpacity={0.8}
+            disabled={saving}
+          >
+            {saving ? (
+              <ActivityIndicator color={Colors.onPrimary} size="small" />
+            ) : (
+              <Text style={styles.saveBtnText}>{hasSavedNote ? 'Update note' : 'Save note'}</Text>
+            )}
           </TouchableOpacity>
         </View>
+
+        {hasSavedNote ? (
+          <TouchableOpacity style={styles.clearBtn} onPress={handleClear} activeOpacity={0.7}>
+            <Trash2 size={16} color={Colors.error} />
+            <Text style={styles.clearBtnText}>Clear note for this day</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       <View style={styles.quoteCard}>
         <Text style={styles.quoteText}>{dailyQuote}</Text>
       </View>
-
-      {moments && moments.length > 0 && (
-        <View style={styles.entriesSection}>
-          {moments.map((moment) => (
-            <MomentEntry
-              key={moment.id}
-              moment={moment}
-              onEdit={setEditing}
-              onDelete={onDeleteMoment}
-            />
-          ))}
-        </View>
-      )}
-
-      <EditMomentModal
-        visible={!!editing}
-        moment={editing}
-        onClose={() => setEditing(null)}
-        onSave={onUpdateMoment}
-        onDelete={onDeleteMoment}
-      />
     </View>
   );
 }
@@ -326,7 +210,7 @@ const createStyles = (Colors) =>
       flexDirection: 'row',
       alignItems: 'flex-start',
       gap: 12,
-      marginBottom: 20,
+      marginBottom: 16,
     },
     headerText: {
       flex: 1,
@@ -340,6 +224,24 @@ const createStyles = (Colors) =>
     subtitle: {
       fontSize: 13,
       color: Colors.textTertiary,
+      lineHeight: 18,
+    },
+    loadingRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      marginBottom: 12,
+    },
+    loadingText: {
+      fontSize: 13,
+      color: Colors.textSecondary,
+      fontFamily: 'PlusJakartaSans-Medium',
+    },
+    errorText: {
+      fontSize: 13,
+      color: Colors.error,
+      marginBottom: 12,
+      fontFamily: 'PlusJakartaSans-Medium',
     },
     sectionLabel: {
       fontSize: 11,
@@ -393,13 +295,13 @@ const createStyles = (Colors) =>
       backgroundColor: Colors.background,
       borderRadius: Layout.borderRadius.lg,
       padding: 14,
-      minHeight: 80,
+      minHeight: 100,
       marginBottom: 16,
     },
     noteInput: {
       fontSize: 14,
       color: Colors.textPrimary,
-      minHeight: 60,
+      minHeight: 80,
       lineHeight: 20,
     },
     actionRow: {
@@ -428,11 +330,29 @@ const createStyles = (Colors) =>
       paddingVertical: 14,
       borderRadius: 24,
       alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: 48,
+    },
+    saveBtnDisabled: {
+      opacity: 0.7,
     },
     saveBtnText: {
       fontSize: 14,
       fontFamily: 'PlusJakartaSans-Bold',
       color: Colors.onPrimary,
+    },
+    clearBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      marginTop: 14,
+      paddingVertical: 10,
+    },
+    clearBtnText: {
+      fontSize: 13,
+      fontFamily: 'PlusJakartaSans-SemiBold',
+      color: Colors.error,
     },
     quoteCard: {
       backgroundColor: '#FFF5ED',
@@ -446,146 +366,5 @@ const createStyles = (Colors) =>
       color: '#B45309',
       fontStyle: 'italic',
       lineHeight: 20,
-    },
-    entriesSection: {
-      marginTop: 12,
-      gap: 8,
-    },
-    entryCard: {
-      backgroundColor: Colors.cardBackground,
-      borderRadius: Layout.borderRadius.lg,
-      padding: 14,
-      shadowColor: Colors.shadowColor,
-      shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.04,
-      shadowRadius: 4,
-      elevation: 2,
-    },
-    entryRow: {
-      flexDirection: 'row',
-      alignItems: 'flex-start',
-      gap: 8,
-    },
-    entryMood: {
-      fontSize: 26,
-      lineHeight: 32,
-      marginTop: 2,
-      maxWidth: 44,
-      flexShrink: 0,
-      textAlign: 'center',
-    },
-    entryContent: {
-      flex: 1,
-      minWidth: 0,
-    },
-    entryText: {
-      fontSize: 14,
-      fontFamily: 'PlusJakartaSans-Medium',
-      color: Colors.textPrimary,
-      flexShrink: 1,
-    },
-    entryDate: {
-      fontSize: 12,
-      color: Colors.textTertiary,
-      marginTop: 4,
-      flexShrink: 1,
-    },
-    entryRatingBadge: {
-      backgroundColor: Colors.primaryLight,
-      paddingHorizontal: 8,
-      paddingVertical: 4,
-      borderRadius: 8,
-      maxWidth: 72,
-      flexShrink: 0,
-      alignSelf: 'flex-start',
-    },
-    entryRatingText: {
-      fontSize: 11,
-      fontFamily: 'PlusJakartaSans-SemiBold',
-      color: Colors.primary,
-      textAlign: 'center',
-    },
-    entryActions: {
-      flexShrink: 0,
-      alignItems: 'center',
-      gap: 10,
-      paddingTop: 2,
-    },
-    entryActionBtn: {
-      padding: 4,
-    },
-    modalRoot: {
-      flex: 1,
-    },
-    modalOverlay: {
-      flex: 1,
-      backgroundColor: 'rgba(0,0,0,0.45)',
-      justifyContent: 'center',
-      paddingHorizontal: 20,
-    },
-    modalCard: {
-      backgroundColor: Colors.cardBackground,
-      borderRadius: Layout.borderRadius.xl,
-      maxHeight: '88%',
-      overflow: 'hidden',
-    },
-    modalSafe: {
-      maxHeight: '100%',
-    },
-    modalHeader: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingHorizontal: 18,
-      paddingTop: 16,
-      paddingBottom: 8,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: Colors.divider,
-    },
-    modalTitle: {
-      fontSize: 18,
-      fontFamily: 'PlusJakartaSans-Bold',
-      color: Colors.textPrimary,
-    },
-    modalScroll: {
-      maxHeight: 360,
-      paddingHorizontal: 18,
-      paddingTop: 12,
-    },
-    modalActions: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 12,
-      paddingHorizontal: 18,
-      paddingVertical: 14,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: Colors.divider,
-    },
-    modalDeleteBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-      paddingVertical: 12,
-      paddingHorizontal: 14,
-      borderRadius: 24,
-      borderWidth: 1,
-      borderColor: Colors.border,
-    },
-    modalDeleteText: {
-      fontSize: 14,
-      fontFamily: 'PlusJakartaSans-SemiBold',
-      color: Colors.error,
-    },
-    modalSaveBtn: {
-      flex: 1,
-      backgroundColor: Colors.textPrimary,
-      paddingVertical: 14,
-      borderRadius: 24,
-      alignItems: 'center',
-    },
-    modalSaveText: {
-      fontSize: 14,
-      fontFamily: 'PlusJakartaSans-Bold',
-      color: Colors.onPrimary,
     },
   });

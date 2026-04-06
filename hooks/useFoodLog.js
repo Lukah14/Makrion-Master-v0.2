@@ -8,8 +8,8 @@ import {
   moveFoodLogEntry,
   updateEntryStatus,
   buildLogEntry,
+  buildManualLogEntry,
   calcDailySummary,
-  calcNutrients,
   subscribeFoodLogEntries,
   listFoodLogEntries,
 } from '@/services/foodLogService';
@@ -57,6 +57,27 @@ export function useFoodLog(dateKey) {
       if (!grams || grams <= 0) throw new Error('Grams must be > 0');
 
       const entry = buildLogEntry({ food, mealType, grams, ...options });
+      return addFoodLogEntry(user.uid, dateKey, entry);
+    },
+    [user, dateKey]
+  );
+
+  const addManualEntry = useCallback(
+    async ({ name, mealType, nutrientsSnapshot, status, note }) => {
+      if (!user) throw new Error('User not authenticated');
+      if (!dateKey) throw new Error('Date is required');
+      if (!mealType) throw new Error('Meal type is required');
+      const trimmed = String(name || '').trim();
+      if (!trimmed) throw new Error('Food name is required');
+
+      const entry = buildManualLogEntry({
+        dateKey,
+        name: trimmed,
+        mealType,
+        nutrientsSnapshot,
+        status,
+        note,
+      });
       return addFoodLogEntry(user.uid, dateKey, entry);
     },
     [user, dateKey]
@@ -122,6 +143,7 @@ export function useFoodLog(dateKey) {
     error,
     summary,
     addEntry,
+    addManualEntry,
     editEntry,
     removeEntry,
     duplicateEntry,

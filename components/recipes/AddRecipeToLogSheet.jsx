@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Modal,
   SafeAreaView, ScrollView,
@@ -13,13 +13,20 @@ const MEAL_TYPES = [
   { id: 'snack', label: 'Snack', emoji: '🍎' },
 ];
 
+const DEFAULT_LOG_SERVINGS = 1;
+
 export default function AddRecipeToLogSheet({ visible, recipe, onAdd, onClose }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
 
-  const [servings, setServings] = useState(1);
+  const [servings, setServings] = useState(DEFAULT_LOG_SERVINGS);
   const [mealType, setMealType] = useState('lunch');
   const [added, setAdded] = useState(false);
+
+  useEffect(() => {
+    if (!visible || !recipe) return;
+    setServings(DEFAULT_LOG_SERVINGS);
+  }, [visible, recipe?.id]);
 
   if (!recipe) return null;
 
@@ -43,7 +50,7 @@ export default function AddRecipeToLogSheet({ visible, recipe, onAdd, onClose })
     setTimeout(() => {
       onAdd({ recipe, servings, mealType, ...total });
       setAdded(false);
-      setServings(1);
+      setServings(DEFAULT_LOG_SERVINGS);
       setMealType('lunch');
     }, 600);
   };

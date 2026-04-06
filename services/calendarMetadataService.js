@@ -2,11 +2,7 @@
  * Aggregates per-day flags for the monthly calendar (Firebase, user-scoped).
  */
 
-import { listFoodLogEntries } from '@/services/foodLogService';
-import { listActivityEntries } from '@/services/activityService';
-import { getWaterLog } from '@/services/waterService';
-import { listHabitCompletions } from '@/services/habitService';
-import { getEntryByDate } from '@/services/progressService';
+import { dayHasMeaningfulProgress } from '@/services/dailyMeaningfulDayService';
 import {
   collection,
   query,
@@ -41,19 +37,7 @@ export async function fetchMemorableMomentDateKeys(uid, startKey, endKey) {
 }
 
 async function dayHasTrackedData(uid, dateKey) {
-  const [food, activity, water, completions, weightEntry] = await Promise.all([
-    listFoodLogEntries(uid, dateKey).then((a) => a.length > 0),
-    listActivityEntries(uid, dateKey).then((a) => a.length > 0),
-    getWaterLog(uid, dateKey).then(
-      (w) => (w.totalMl || 0) > 0 || (w.glasses || 0) > 0
-    ),
-    listHabitCompletions(uid, dateKey).then((list) => {
-      if (!list.length) return false;
-      return list.some((c) => c.completed !== false);
-    }),
-    getEntryByDate(uid, dateKey).then((e) => e != null && e.weight != null),
-  ]);
-  return food || activity || water || completions || weightEntry;
+  return dayHasMeaningfulProgress(uid, dateKey);
 }
 
 /**

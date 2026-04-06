@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import { useAuth } from '@/context/AuthContext';
 import {
-  getUserDocument,
   updateUserProfile,
   updateUserGoals,
   updateUserPreferences,
+  patchUserDocument,
+  syncProfilesFromUserDoc,
 } from '@/services/userService';
+import { mergeMainHealthProfile } from '@/services/userHealthProfileService';
 
 export function useUser() {
   const { user } = useAuth();
@@ -17,20 +21,26 @@ export function useUser() {
     if (!user) {
       setUserData(null);
       setLoading(false);
-      return;
+      setError(null);
+      return undefined;
     }
 
     setLoading(true);
-    getUserDocument(user.uid)
-      .then((data) => {
-        setUserData(data);
+    const ref = doc(db, 'users', user.uid);
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        setUserData(snap.exists() ? { id: snap.id, ...snap.data() } : null);
         setLoading(false);
-      })
-      .catch((err) => {
-        setError(err.message);
+        setError(null);
+      },
+      (err) => {
+        setError(err.message || String(err));
         setLoading(false);
-      });
-  }, [user]);
+      },
+    );
+    return unsub;
+  }, [user?.uid]);
 
   async function saveProfile(profileData) {
     if (!user) return;
@@ -50,5 +60,17 @@ export function useUser() {
     setUserData((prev) => ({ ...prev, preferences }));
   }
 
-  return { userData, loading, error, saveProfile, saveGoals, savePreferences };
+  /**
+   * Partial update to users/{uid}, optional profile/main merge, then profiles/{uid} mirror.
+   */
+  async function patchUser(partial, mainProfileMerge = null) {
+    if (!user) return;
+    await patchUserDocument(user.uid, partial);
+    if (mainProfileMerge && typeof mainProfileMerge === 'object') {
+      await mergeMainHealthProfile(user.uid, mainProfileMerge);
+    }
+    await syncProfilesFromUserDoc(user.uid);
+  }
+
+  return { userData, loading, error, saveProfile, saveGoals, savePreferences, patchUser };
 }

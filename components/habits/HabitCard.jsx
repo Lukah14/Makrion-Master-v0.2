@@ -5,6 +5,12 @@ import { useTheme } from '@/context/ThemeContext';
 import { Layout } from '@/constants/layout';
 import { habitIconMap, getIconForCategory } from './habitIconMap';
 import { timerTargetToSeconds } from '@/lib/habitDayState';
+import {
+  normalizeNumericConditionType,
+  getNumericTargetValue,
+  numericHabitProgressPercent,
+  NUMERIC_CONDITION,
+} from '@/lib/habitNumericCondition';
 
 function ChecklistExpanded({ items, onToggleItem }) {
   const { colors: Colors } = useTheme();
@@ -31,24 +37,45 @@ function ChecklistExpanded({ items, onToggleItem }) {
 }
 
 function NumericExpanded({
+  habitForNumeric,
   current,
   target,
+  completed,
   unit,
+  numericDayHasEntry = true,
   onIncrement,
   onDecrement,
   onSetNumericCurrent,
+  /** Increment (e.g. tap row value) to open the keyboard and edit by typing. */
+  focusEditToken = 0,
 }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(String(current ?? 0));
+  const [draft, setDraft] = useState('');
 
-  const targetNum = Math.max(Number(target) || 1, 1);
-  const cur = Number(current) || 0;
+  const cond = normalizeNumericConditionType(habitForNumeric);
+  const isAnyValue = cond === NUMERIC_CONDITION.ANY_VALUE;
+  const tgt = getNumericTargetValue(habitForNumeric);
+  const targetNum = tgt != null && Number.isFinite(Number(tgt)) ? Math.max(Number(tgt), 1) : null;
+  const cur = isAnyValue && !numericDayHasEntry ? null : Number(current) || 0;
+  const progressCompleted = isAnyValue ? false : !!completed;
+  const progressCurrent = isAnyValue ? (numericDayHasEntry ? Number(current) || 0 : 0) : cur;
+  const progressPct = isAnyValue ? 0 : numericHabitProgressPercent(progressCurrent, cond, tgt, progressCompleted);
 
   useEffect(() => {
-    if (!editing) setDraft(String(cur));
-  }, [cur, editing]);
+    if (!editing) {
+      if (isAnyValue && !numericDayHasEntry) setDraft('');
+      else setDraft(cur === null ? '' : String(cur));
+    }
+  }, [cur, editing, isAnyValue, numericDayHasEntry]);
+
+  useEffect(() => {
+    if (focusEditToken < 1) return;
+    if (isAnyValue && !numericDayHasEntry) setDraft('');
+    else setDraft(cur === null ? '' : String(cur));
+    setEditing(true);
+  }, [focusEditToken, isAnyValue, numericDayHasEntry, cur]);
 
   const commit = useCallback(() => {
     if (!onSetNumericCurrent) {
@@ -57,18 +84,23 @@ function NumericExpanded({
     }
     const trimmed = draft.replace(/\s/g, '');
     if (trimmed === '') {
-      setDraft(String(cur));
+      if (isAnyValue && !numericDayHasEntry) {
+        setEditing(false);
+        Keyboard.dismiss();
+        return;
+      }
+      setDraft(cur === null ? '' : String(cur));
       setEditing(false);
       return;
     }
     if (!/^\d+$/.test(trimmed)) {
-      setDraft(String(cur));
+      setDraft(cur === null ? '' : String(cur));
       setEditing(false);
       return;
     }
     const n = parseInt(trimmed, 10);
     if (!Number.isFinite(n) || n < 0) {
-      setDraft(String(cur));
+      setDraft(cur === null ? '' : String(cur));
       setEditing(false);
       return;
     }
@@ -76,7 +108,7 @@ function NumericExpanded({
     onSetNumericCurrent(capped);
     setEditing(false);
     Keyboard.dismiss();
-  }, [draft, cur, onSetNumericCurrent]);
+  }, [draft, cur, onSetNumericCurrent, isAnyValue, numericDayHasEntry]);
 
   const wrapDec = () => {
     setEditing(false);
@@ -86,6 +118,9 @@ function NumericExpanded({
     setEditing(false);
     onIncrement();
   };
+
+  const valueRest =
+    targetNum != null ? ` / ${target} ${unit || ''}`.trimEnd() : unit ? ` ${unit}` : '';
 
   return (
     <View style={styles.expandedSection}>
@@ -100,7 +135,10 @@ function NumericExpanded({
               value={draft}
               onChangeText={(t) => setDraft(t.replace(/[^\d]/g, ''))}
               keyboardType="number-pad"
+              inputMode="numeric"
+              returnKeyType="done"
               selectTextOnFocus
+              showSoftInputOnFocus
               autoFocus
               onSubmitEditing={commit}
               onBlur={commit}
@@ -109,17 +147,14 @@ function NumericExpanded({
             <TouchableOpacity
               activeOpacity={0.7}
               onPress={() => {
-                setDraft(String(cur));
+                setDraft(isAnyValue && !numericDayHasEntry ? '' : String(cur));
                 setEditing(true);
               }}
               hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
             >
               <Text style={styles.numericValue}>
-                {cur}
-                <Text style={styles.numericValueRest}>
-                  {' '}
-                  / {target} {unit}
-                </Text>
+                {cur === null ? '—' : cur}
+                <Text style={styles.numericValueRest}>{valueRest}</Text>
               </Text>
             </TouchableOpacity>
           )}
@@ -128,14 +163,11 @@ function NumericExpanded({
           <Plus size={16} color={Colors.textPrimary} />
         </TouchableOpacity>
       </View>
-      <View style={styles.progressBar}>
-        <View
-          style={[
-            styles.progressFill,
-            { width: `${Math.min((cur / targetNum) * 100, 100)}%` },
-          ]}
-        />
-      </View>
+      {!isAnyValue ? (
+        <View style={styles.progressBar}>
+          <View style={[styles.progressFill, { width: `${progressPct}%` }]} />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -219,15 +251,21 @@ export default function HabitCard({
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
   const [expanded, setExpanded] = useState(false);
+  const [numericFocusToken, setNumericFocusToken] = useState(0);
+
+  const numericCond = habit.type === 'numeric' ? normalizeNumericConditionType(habit) : null;
+  const isAnyValueNumeric = numericCond === NUMERIC_CONDITION.ANY_VALUE;
+  const numericTarget = habit.type === 'numeric' ? getNumericTargetValue(habit) : null;
+  const showCompletionCheckbox = habit.type !== 'numeric' || !isAnyValueNumeric;
 
   const isCompleted =
     habit.type === 'yesno'
       ? habit.completed
       : habit.type === 'checklist'
         ? habit.checklistItems?.every((item) => item.completed)
-        : habit.type === 'timer'
+        : habit.type === 'timer' || habit.type === 'numeric'
           ? habit.completed
-          : habit.current >= habit.target;
+          : false;
 
   const handlePress = () => {
     if (habit.type === 'yesno') {
@@ -272,20 +310,65 @@ export default function HabitCard({
           </View>
         </View>
 
-        <TouchableOpacity
-          style={[styles.checkbox, isCompleted && styles.checkboxDone]}
-          onPress={handleCheckPress}
-          activeOpacity={0.7}
-        >
-          {isCompleted && <Check size={18} color={Colors.onPrimary} />}
-        </TouchableOpacity>
+        {habit.type === 'numeric' ? (
+          <TouchableOpacity
+            onPress={() => {
+              setExpanded(true);
+              setNumericFocusToken((t) => t + 1);
+            }}
+            activeOpacity={0.7}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityRole="button"
+            accessibilityLabel="Edit habit value"
+          >
+            <Text
+              style={[
+                styles.anyValueSummary,
+                {
+                  color:
+                    isAnyValueNumeric && !habit.numericDayHasEntry
+                      ? Colors.textTertiary
+                      : Colors.textPrimary,
+                },
+              ]}
+              numberOfLines={1}
+            >
+              {isAnyValueNumeric ? (
+                <>
+                  {habit.numericDayHasEntry ? String(habit.current ?? 0) : '—'}
+                  {habit.unit ? ` ${habit.unit}` : ''}
+                </>
+              ) : (
+                <>
+                  {String(habit.current ?? 0)}
+                  {numericTarget != null ? ` / ${numericTarget}` : ''}
+                  {habit.unit ? ` ${habit.unit}` : ''}
+                </>
+              )}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+
+        {showCompletionCheckbox ? (
+          <TouchableOpacity
+            style={[styles.checkbox, isCompleted && styles.checkboxDone]}
+            onPress={handleCheckPress}
+            activeOpacity={0.7}
+          >
+            {isCompleted && <Check size={18} color={Colors.onPrimary} />}
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       {expanded && habit.type === 'numeric' && (
         <NumericExpanded
+          habitForNumeric={habit}
           current={habit.current}
           target={habit.target}
+          completed={habit.completed}
           unit={habit.unit}
+          numericDayHasEntry={isAnyValueNumeric ? !!habit.numericDayHasEntry : true}
+          focusEditToken={numericFocusToken}
           onIncrement={() => onIncrement(habit.id)}
           onDecrement={() => onDecrement(habit.id)}
           onSetNumericCurrent={
@@ -367,6 +450,13 @@ const createStyles = (Colors) => StyleSheet.create({
     fontSize: 12,
     color: Colors.textTertiary,
   },
+  anyValueSummary: {
+    fontSize: 15,
+    fontFamily: 'PlusJakartaSans-SemiBold',
+    maxWidth: 120,
+    textAlign: 'right',
+    marginLeft: 8,
+  },
   checkbox: {
     width: 32,
     height: 32,
@@ -423,7 +513,8 @@ const createStyles = (Colors) => StyleSheet.create({
     fontSize: 15,
     fontFamily: 'PlusJakartaSans-SemiBold',
     color: Colors.textPrimary,
-    minWidth: 72,
+    minWidth: 100,
+    maxWidth: 200,
     paddingVertical: 6,
     paddingHorizontal: 10,
     textAlign: 'center',

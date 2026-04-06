@@ -85,7 +85,11 @@ export default function HabitDetailScreen({
             />
           )}
           {activeTab === 'Statistics' && (
-            <HabitDetailStatistics habit={habit} completionHistory={completionHistory} />
+            <HabitDetailStatistics
+              habit={habit}
+              completionHistory={completionHistory}
+              completionRows={completionRows}
+            />
           )}
           {activeTab === 'Edit' && (
             <View style={styles.editTab}>
@@ -99,8 +103,11 @@ export default function HabitDetailScreen({
               </TouchableOpacity>
               <HabitDetailEdit
                 habit={habit}
-                onSave={(updated) => { onSaveEdit?.(updated); onBack?.(); }}
-                onDelete={(h) => { onDelete?.(h); onBack?.(); }}
+                onSave={(patch) => onSaveEdit?.(patch)}
+                onDelete={async (h) => {
+                  const ok = await onDelete?.(h);
+                  if (ok) onBack?.();
+                }}
                 onRestart={onRestart}
               />
             </View>

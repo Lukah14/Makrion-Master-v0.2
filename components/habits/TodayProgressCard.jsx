@@ -2,6 +2,7 @@ import { View, Text, StyleSheet } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { useTheme } from '@/context/ThemeContext';
 import { Layout } from '@/constants/layout';
+import { habitCountsTowardDailyCompletion } from '@/lib/habitNumericCondition';
 
 /**
  * Progress for the selected calendar day (merged habit rows with .completed).
@@ -14,12 +15,13 @@ export default function TodayProgressCard({ habits, dateKey, todayKey }) {
   const styles = createStyles(Colors);
 
   const active = (habits || []).filter((h) => !h.paused && !h.isPaused);
-  const completedCount = active.filter((h) => {
+  const tally = active.filter(habitCountsTowardDailyCompletion);
+  const completedCount = tally.filter((h) => {
     if (h.type === 'yesno') return h.completed;
     if (h.type === 'checklist') return h.checklistItems?.every((i) => i.completed);
     return h.completed || (Number(h.current) >= Number(h.target) && Number(h.target) > 0);
   }).length;
-  const total = active.length;
+  const total = tally.length;
   const pct = total > 0 ? Math.round((completedCount / total) * 100) : 0;
 
   const isToday = todayKey && dateKey === todayKey;

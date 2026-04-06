@@ -14,7 +14,7 @@ import {
 import { useTheme } from '@/context/ThemeContext';
 import { Layout } from '@/constants/layout';
 import { calcTotalCaloriesBurned } from '@/services/activityService';
-import { editorTypeFromEntry, displayTypeLabel } from '@/lib/activityTypes';
+import StepsTrackerSection from '@/components/activity/StepsTrackerSection';
 
 function formatCreatedAt(ts) {
   if (!ts) return '';
@@ -36,21 +36,11 @@ function formatDurationMinutesLabel(entry) {
 
 /** Extra detail under the title (duration is on the title: "Name · X min"). */
 function buildSubtitle(entry) {
-  const t = editorTypeFromEntry(entry);
   const parts = [];
+  if (entry.category) parts.push(entry.category);
   if (entry.typeOfExercise || entry.intensity) {
     const tag = [entry.typeOfExercise, entry.intensity].filter(Boolean).join(' · ');
     if (tag) parts.push(tag);
-  }
-  if (t === 'reps' || entry.type === 'strength') {
-    const s = entry.sets;
-    const r = entry.repsPerSet ?? entry.reps;
-    if (s != null && r != null) parts.push(`${s}×${r} reps`);
-  }
-  const dk = Number(entry.distanceKm) || 0;
-  if (dk > 0) parts.push(`${dk} km`);
-  else if (entry.distanceMeters != null && Number(entry.distanceMeters) > 0) {
-    parts.push(`${entry.distanceMeters} m`);
   }
   return parts.join(' · ') || '';
 }
@@ -74,10 +64,9 @@ function ActivityCard({ entry, onEdit, onDelete }) {
   const { colors: Colors } = useTheme();
   const s = createStyles(Colors);
   const [menuOpen, setMenuOpen] = useState(false);
-  const typeLabel = displayTypeLabel(editorTypeFromEntry(entry));
   const kcal = Number(entry.caloriesBurned) || 0;
   const timeStr = formatCreatedAt(entry.createdAt);
-  const fromLibrary = entry.source === 'firestore';
+  const fromLibrary = entry.source === 'firestore' || entry.source === 'exercise_library';
   const instructionText = entry.shortInstructions || entry.instructions;
   const durationPart = formatDurationMinutesLabel(entry);
   const titleText = durationPart ? `${entry.name} · ${durationPart}` : entry.name;
@@ -92,7 +81,6 @@ function ActivityCard({ entry, onEdit, onDelete }) {
         <View style={s.cardBody}>
           <Text style={s.cardName}>{titleText}</Text>
           <View style={s.cardMeta}>
-            <Text style={s.typePill}>{typeLabel}</Text>
             {fromLibrary ? <Text style={s.libPill}>Library</Text> : null}
             {timeStr ? (
               <>
@@ -167,6 +155,13 @@ function ActivityCard({ entry, onEdit, onDelete }) {
 export default function TodayPage({
   entries = [],
   loading = false,
+  dateKey = '',
+  isToday = true,
+  stepsToday = 0,
+  stepsGoal = 10000,
+  stepsLoading = false,
+  onSaveSteps,
+  onSaveGoal,
   onAdd,
   onEdit,
   onDelete,
@@ -206,6 +201,16 @@ export default function TodayPage({
         />
       </View>
 
+      <StepsTrackerSection
+        dateKey={dateKey}
+        isToday={isToday}
+        steps={stepsToday}
+        goal={stepsGoal}
+        loading={stepsLoading}
+        onSaveSteps={onSaveSteps}
+        onSaveGoal={onSaveGoal}
+      />
+
       <View style={s.sectionHeader}>
         <Text style={s.sectionTitle}>Activities</Text>
         <TouchableOpacity style={s.addBtn} onPress={onAdd} activeOpacity={0.7}>
@@ -238,7 +243,7 @@ const createStyles = (Colors) => StyleSheet.create({
   summaryRow: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 16,
+    marginBottom: 12,
   },
   summaryCard: {
     flex: 1,
@@ -308,16 +313,6 @@ const createStyles = (Colors) => StyleSheet.create({
   cardMeta: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 4, marginBottom: 4 },
   metaText: { fontSize: 12, color: Colors.textTertiary },
   metaDot: { fontSize: 12, color: Colors.textTertiary },
-  typePill: {
-    fontSize: 10,
-    fontFamily: 'PlusJakartaSans-SemiBold',
-    color: Colors.textSecondary,
-    backgroundColor: Colors.innerCard,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    overflow: 'hidden',
-  },
   libPill: {
     fontSize: 10,
     fontFamily: 'PlusJakartaSans-SemiBold',
