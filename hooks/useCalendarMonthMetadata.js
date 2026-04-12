@@ -1,6 +1,8 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { fetchCalendarMonthMetadata } from '@/services/calendarMetadataService';
+
+const CAL_META_COLD_START_MS = 900;
 
 /**
  * @param {number} year
@@ -9,6 +11,7 @@ import { fetchCalendarMonthMetadata } from '@/services/calendarMetadataService';
  */
 export function useCalendarMonthMetadata(year, monthIndex, refreshKey = 0) {
   const { user } = useAuth();
+  const coldStartPendingRef = useRef(true);
   const [meta, setMeta] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -34,8 +37,21 @@ export function useCalendarMonthMetadata(year, monthIndex, refreshKey = 0) {
   }, [user?.uid, year, monthIndex, refreshKey]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    if (!user) {
+      coldStartPendingRef.current = true;
+      void load();
+      return undefined;
+    }
+    if (!coldStartPendingRef.current) {
+      void load();
+      return undefined;
+    }
+    const t = setTimeout(() => {
+      coldStartPendingRef.current = false;
+      void load();
+    }, CAL_META_COLD_START_MS);
+    return () => clearTimeout(t);
+  }, [load, user]);
 
   return { meta, loading, error, reload: load };
 }

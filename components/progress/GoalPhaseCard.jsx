@@ -42,6 +42,33 @@ export default function GoalPhaseCard({ goal, onEdit }) {
   const done = sw != null && cw != null ? Math.abs(cw - sw) : 0;
   const progress = total > 0 ? Math.min(done / total, 1) : 0;
 
+  const weeks =
+    goal.goalTimelineWeeks != null && Number.isFinite(Number(goal.goalTimelineWeeks))
+      ? Math.round(Number(goal.goalTimelineWeeks))
+      : goal.weeksToGoal != null && Number.isFinite(Number(goal.weeksToGoal))
+        ? Math.round(Number(goal.weeksToGoal))
+        : null;
+
+  const wk = goal.expectedWeeklyChangeKg;
+  const paceLabel =
+    wk == null || !Number.isFinite(Number(wk))
+      ? null
+      : Number(wk) < -0.005
+        ? `Lose ${Math.abs(Number(wk)).toFixed(2)} kg/wk`
+        : Number(wk) > 0.005
+          ? `Gain ${Number(wk).toFixed(2)} kg/wk`
+          : 'Maintain';
+
+  let goalByLabel = '—';
+  if (goal.estimatedGoalDate && typeof goal.estimatedGoalDate === 'string') {
+    try {
+      const d = new Date(goal.estimatedGoalDate.slice(0, 10) + 'T12:00:00');
+      goalByLabel = d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+    } catch {
+      goalByLabel = goal.estimatedGoalDate.slice(0, 10);
+    }
+  }
+
   return (
     <View style={styles.card}>
       <View style={styles.header}>
@@ -69,8 +96,20 @@ export default function GoalPhaseCard({ goal, onEdit }) {
 
       <View style={styles.timeRow}>
         <Text style={styles.timeLabel}>⏱ Time to goal</Text>
-        <Text style={styles.timeVal}>{goal.weeksToGoal} weeks</Text>
+        <Text style={styles.timeVal}>{weeks != null ? `${weeks} wk` : '—'}</Text>
       </View>
+      {paceLabel ? (
+        <View style={styles.timeRow}>
+          <Text style={styles.timeLabel}>Expected pace</Text>
+          <Text style={styles.timeVal}>{paceLabel}</Text>
+        </View>
+      ) : null}
+      {goal.estimatedGoalDate ? (
+        <View style={styles.timeRow}>
+          <Text style={styles.timeLabel}>Goal by (est.)</Text>
+          <Text style={styles.timeVal}>{goalByLabel}</Text>
+        </View>
+      ) : null}
 
       <TouchableOpacity style={styles.editBtn} onPress={onEdit} activeOpacity={0.8}>
         <Text style={styles.editBtnText}>Log weight</Text>

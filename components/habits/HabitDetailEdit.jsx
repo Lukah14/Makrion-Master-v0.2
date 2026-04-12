@@ -17,34 +17,17 @@ import {
 import { useTheme } from '@/context/ThemeContext';
 import { habitCategories } from '@/data/mockData';
 import { habitIconMap } from './habitIconMap';
+import HabitFrequencyFormFields from '@/components/habits/FrequencyFormFields';
 import {
-  deriveRepeatFromHabit,
+  deriveFrequencyStateFromHabit,
   deriveStartEndKeysFromHabit,
   normalizeDateKeyInput,
   defaultEmojiForCategory,
+  formatHabitFrequencyLabelFromState,
 } from '@/lib/habitEditForm';
+import { validateFrequencyFormState } from '@/lib/habitFrequency';
 
 const ACCENT = '#E8526A';
-
-const REPEAT_LABELS = {
-  daily: 'Every day',
-  specific_days_week: 'Specific weekdays',
-  specific_days_month: 'Monthly',
-  specific_days_year: 'Yearly',
-  some_days_period: 'Custom interval',
-  repeat: 'Repeat',
-};
-
-const FREQUENCY_OPTIONS = [
-  { id: 'daily', label: 'Every day' },
-  { id: 'specific_days_week', label: 'Specific weekdays' },
-  { id: 'specific_days_month', label: 'Monthly' },
-  { id: 'specific_days_year', label: 'Yearly' },
-  { id: 'some_days_period', label: 'Custom interval' },
-  { id: 'repeat', label: 'Repeat' },
-];
-
-const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 function findCategoryByHabit(habit) {
   const name = habit?.category;
@@ -61,9 +44,12 @@ export default function HabitDetailEdit({ habit, onSave, onDelete, onRestart }) 
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [repeatRule, setRepeatRule] = useState('daily');
   const [repeatDays, setRepeatDays] = useState([]);
+  const [yearlyDates, setYearlyDates] = useState([]);
+  const [cadenceCount, setCadenceCount] = useState(1);
+  const [cadenceUnit, setCadenceUnit] = useState('week');
+  const [intervalEvery, setIntervalEvery] = useState(2);
   const [startDateStr, setStartDateStr] = useState('');
   const [endDateStr, setEndDateStr] = useState('');
-  const [periodInterval, setPeriodInterval] = useState('2');
 
   const [editingName, setEditingName] = useState(false);
   const [categoryModal, setCategoryModal] = useState(false);
@@ -76,12 +62,13 @@ export default function HabitDetailEdit({ habit, onSave, onDelete, onRestart }) 
     setName(h.name || '');
     setDescription(h.description ?? '');
     setSelectedCategory(findCategoryByHabit(h));
-    const r = deriveRepeatFromHabit(h);
-    setRepeatRule(r.repeatRule);
-    setRepeatDays(r.repeatDays);
-    if (r.repeatRule === 'some_days_period') {
-      setPeriodInterval(String(r.repeatDays[0] || 2));
-    }
+    const f = deriveFrequencyStateFromHabit(h);
+    setRepeatRule(f.repeatRule);
+    setRepeatDays(f.repeatDays);
+    setYearlyDates(f.yearlyDates || []);
+    setCadenceCount(f.cadenceCount);
+    setCadenceUnit(f.cadenceUnit || 'week');
+    setIntervalEvery(f.intervalEvery);
     const { startDateKey, endDateKey } = deriveStartEndKeysFromHabit(h);
     setStartDateStr(startDateKey);
     setEndDateStr(endDateKey || '');
@@ -101,31 +88,16 @@ export default function HabitDetailEdit({ habit, onSave, onDelete, onRestart }) 
     setCategoryModal(false);
   };
 
-  const toggleWeekDay = (dayIndex) => {
-    const current = repeatDays || [];
-    if (current.includes(dayIndex)) {
-      setRepeatDays(current.filter((d) => d !== dayIndex));
-    } else {
-      setRepeatDays([...current, dayIndex].sort((a, b) => a - b));
+  const handleRepeatRuleChange = (id) => {
+    setRepeatRule(id);
+    if (id !== 'specific_days_week' && id !== 'specific_days_month') setRepeatDays([]);
+    if (id !== 'specific_days_year') setYearlyDates([]);
+    if (id === 'some_days_period') {
+      setCadenceCount(1);
+      setCadenceUnit('week');
     }
+    if (id === 'repeat') setIntervalEvery(2);
   };
-
-  const toggleMonthDay = (dom) => {
-    const current = repeatDays || [];
-    if (current.includes(dom)) {
-      setRepeatDays(current.filter((d) => d !== dom));
-    } else {
-      setRepeatDays([...current, dom].sort((a, b) => a - b));
-    }
-  };
-
-  const resolvedRepeatDays = useMemo(() => {
-    if (repeatRule === 'some_days_period') {
-      const n = Math.max(1, parseInt(periodInterval, 10) || 2);
-      return [n];
-    }
-    return repeatDays;
-  }, [repeatRule, repeatDays, periodInterval]);
 
   const buildFirestorePatch = () => {
     const cat = selectedCategory;
@@ -153,7 +125,11 @@ export default function HabitDetailEdit({ habit, onSave, onDelete, onRestart }) 
       iconColor: cat?.iconColor || habit.iconColor,
       color: cat?.iconBgColor || habit.color || habit.iconBg,
       repeatRule,
-      repeatDays: resolvedRepeatDays,
+      repeatDays,
+      yearlyDates,
+      cadenceCount,
+      cadenceUnit,
+      intervalEvery,
       startDate: sk,
       endDate,
       endDateEnabled: !!endDate,
@@ -162,6 +138,18 @@ export default function HabitDetailEdit({ habit, onSave, onDelete, onRestart }) 
   };
 
   const handleSave = async () => {
+    const fv = validateFrequencyFormState({
+      repeatRule,
+      repeatDays,
+      yearlyDates,
+      cadenceCount,
+      cadenceUnit,
+      intervalEvery,
+    });
+    if (!fv.ok) {
+      Alert.alert('Frequency', fv.message || 'Check your schedule options.');
+      return;
+    }
     let patch;
     try {
       patch = buildFirestorePatch();
@@ -203,7 +191,14 @@ export default function HabitDetailEdit({ habit, onSave, onDelete, onRestart }) 
   };
 
   const categoryLabel = selectedCategory?.name || habit.category || '—';
-  const freqLabel = REPEAT_LABELS[repeatRule] || REPEAT_LABELS.daily;
+  const freqLabel = formatHabitFrequencyLabelFromState({
+    repeatRule,
+    repeatDays,
+    yearlyDates,
+    cadenceCount,
+    cadenceUnit,
+    intervalEvery,
+  });
 
   return (
     <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
@@ -411,81 +406,38 @@ export default function HabitDetailEdit({ habit, onSave, onDelete, onRestart }) 
               </TouchableOpacity>
             </View>
             <ScrollView style={styles.modalScroll} keyboardShouldPersistTaps="handled">
-              {FREQUENCY_OPTIONS.map((opt) => (
-                <TouchableOpacity
-                  key={opt.id}
-                  style={styles.radioRow}
-                  onPress={() => {
-                    setRepeatRule(opt.id);
-                    if (opt.id !== 'specific_days_week' && opt.id !== 'specific_days_month') {
-                      setRepeatDays([]);
-                    }
-                    if (opt.id === 'some_days_period' && (!repeatDays.length || repeatRule !== 'some_days_period')) {
-                      setPeriodInterval('2');
-                    }
-                  }}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.radio, repeatRule === opt.id && styles.radioActive]}>
-                    {repeatRule === opt.id ? <View style={styles.radioDot} /> : null}
-                  </View>
-                  <Text style={[styles.radioLabel, { color: Colors.textPrimary }]}>{opt.label}</Text>
-                </TouchableOpacity>
-              ))}
-
-              {repeatRule === 'specific_days_week' && (
-                <View style={styles.dayPicker}>
-                  {DAY_LABELS.map((day, index) => {
-                    const d = index + 1;
-                    const on = (repeatDays || []).includes(d);
-                    return (
-                      <TouchableOpacity
-                        key={day}
-                        style={[styles.dayBtn, on && styles.dayBtnActive]}
-                        onPress={() => toggleWeekDay(d)}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={[styles.dayBtnText, on && styles.dayBtnTextActive]}>{day}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              )}
-
-              {repeatRule === 'specific_days_month' && (
-                <View style={styles.monthGrid}>
-                  {Array.from({ length: 31 }, (_, i) => i + 1).map((dom) => {
-                    const on = (repeatDays || []).includes(dom);
-                    return (
-                      <TouchableOpacity
-                        key={dom}
-                        style={[styles.monthChip, on && styles.monthChipActive]}
-                        onPress={() => toggleMonthDay(dom)}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={[styles.monthChipText, on && styles.monthChipTextActive]}>{dom}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              )}
-
-              {repeatRule === 'some_days_period' && (
-                <View style={styles.periodRow}>
-                  <Text style={{ color: Colors.textSecondary, flex: 1 }}>Every</Text>
-                  <TextInput
-                    style={[styles.periodInput, { color: Colors.textPrimary, borderColor: Colors.border }]}
-                    value={periodInterval}
-                    onChangeText={setPeriodInterval}
-                    keyboardType="number-pad"
-                  />
-                  <Text style={{ color: Colors.textSecondary }}>days</Text>
-                </View>
-              )}
-
+              <HabitFrequencyFormFields
+                repeatRule={repeatRule}
+                onRepeatRuleChange={handleRepeatRuleChange}
+                repeatDays={repeatDays}
+                onRepeatDaysChange={setRepeatDays}
+                yearlyDates={yearlyDates}
+                onYearlyDatesChange={setYearlyDates}
+                cadenceCount={cadenceCount}
+                onCadenceCountChange={setCadenceCount}
+                cadenceUnit={cadenceUnit}
+                onCadenceUnitChange={setCadenceUnit}
+                intervalEvery={intervalEvery}
+                onIntervalEveryChange={setIntervalEvery}
+                showTitle={false}
+              />
               <TouchableOpacity
                 style={[styles.modalDone, { backgroundColor: ACCENT }]}
-                onPress={() => setFrequencyModal(false)}
+                onPress={() => {
+                  const v = validateFrequencyFormState({
+                    repeatRule,
+                    repeatDays,
+                    yearlyDates,
+                    cadenceCount,
+                    cadenceUnit,
+                    intervalEvery,
+                  });
+                  if (!v.ok) {
+                    Alert.alert('Frequency', v.message || 'Fix the options above.');
+                    return;
+                  }
+                  setFrequencyModal(false);
+                }}
               >
                 <Text style={styles.modalDoneText}>Done</Text>
               </TouchableOpacity>
@@ -708,77 +660,6 @@ function createStyles(Colors) {
     radioLabel: {
       fontSize: 15,
       fontFamily: 'PlusJakartaSans-Medium',
-    },
-    dayPicker: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8,
-      marginBottom: 12,
-      marginTop: 4,
-    },
-    dayBtn: {
-      paddingVertical: 10,
-      paddingHorizontal: 12,
-      borderRadius: 10,
-      backgroundColor: Colors.innerCard,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: Colors.border,
-    },
-    dayBtnActive: {
-      backgroundColor: ACCENT + '33',
-      borderColor: ACCENT,
-    },
-    dayBtnText: {
-      fontSize: 12,
-      fontFamily: 'PlusJakartaSans-SemiBold',
-      color: Colors.textSecondary,
-    },
-    dayBtnTextActive: {
-      color: ACCENT,
-    },
-    monthGrid: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 6,
-      marginBottom: 12,
-      marginTop: 4,
-    },
-    monthChip: {
-      width: 36,
-      height: 36,
-      borderRadius: 8,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: Colors.innerCard,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: Colors.border,
-    },
-    monthChipActive: {
-      backgroundColor: ACCENT + '33',
-      borderColor: ACCENT,
-    },
-    monthChipText: {
-      fontSize: 12,
-      fontFamily: 'PlusJakartaSans-SemiBold',
-      color: Colors.textSecondary,
-    },
-    monthChipTextActive: {
-      color: ACCENT,
-    },
-    periodRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 10,
-      marginVertical: 12,
-    },
-    periodInput: {
-      width: 56,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderRadius: 10,
-      paddingVertical: 8,
-      paddingHorizontal: 10,
-      textAlign: 'center',
-      fontFamily: 'PlusJakartaSans-SemiBold',
     },
     modalDone: {
       marginTop: 16,

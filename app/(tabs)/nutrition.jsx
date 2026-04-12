@@ -22,7 +22,7 @@ import { num } from '@/lib/num';
 function NutritionHeader({ logSummary, goals }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
-  const calTarget = num(goals?.calories);
+  const calTarget = num(goals?.calories ?? goals?.calorieTarget);
   const protTarget = num(goals?.protein);
   const carbTarget = num(goals?.carbs);
   const fatTarget = num(goals?.fat);
@@ -101,13 +101,13 @@ export default function NutritionScreen() {
   const [dateSheetOpen, setDateSheetOpen] = useState(false);
   const { dateKey, bumpCalendarRefresh } = useNutritionDate();
   const foodLog = useFoodLog(dateKey);
-  const { userData: userDoc } = useUser();
+  const { userData: userDoc, resolvedGoals } = useUser();
   const today = todayDateKey();
   const isSearch = activeTab === 'Search';
   const isRecipes = activeTab === 'Recipes';
   const isFullScreen = isSearch || isRecipes;
 
-  const goals = userDoc?.goals || {};
+  const goals = resolvedGoals ?? userDoc?.goals ?? {};
   const consumed = num(foodLog.summary?.totalsLogged?.kcal);
   const calTarget = num(goals.calories);
   const todayComplete = calTarget > 0 && isNutritionStrikeComplete({ consumed, target: calTarget });

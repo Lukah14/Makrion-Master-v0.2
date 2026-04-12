@@ -2,29 +2,15 @@
  * users/{uid}/profile/main — required onboarding health profile.
  */
 
-import {
-  doc,
-  getDoc,
-  setDoc,
-  updateDoc,
-  serverTimestamp,
-  onSnapshot,
-} from 'firebase/firestore';
-import { db } from '@/lib/firebase';
-import { auth } from '@/lib/firebase';
-import { createUserDocument, ensureUserDocument, getUserDocument } from '@/services/userService';
-import { onboardingLog } from '@/lib/onboardingDebug';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { db, auth } from '@/lib/firebase';
+import { subscribeMainProfileDocument } from '@/lib/firestoreMainProfileDoc';
+import { readDocResilient } from '@/lib/firestoreResilientRead';
+import { onboardingLog, onboardingFlowLog } from '@/lib/onboardingDebug';
 import { upsertWeightEntry } from '@/services/weightEntryService';
 import { todayDateKey } from '@/lib/dateKey';
-import {
-  isHealthProfileComplete,
-  estimateTdee,
-  calorieTargetFromGoal,
-  macrosFromCaloriesAndGoal,
-  kcalFromMacros,
-  mainGoalToAppGoalType,
-  activityLevelToLabel,
-} from '@/lib/healthProfile';
+import { isHealthProfileComplete, MAIN_GOAL } from '@/lib/healthProfile';
+import { patchUserDocument } from '@/services/userService';
 
 function userRootRef(uid) {
   return doc(db, 'users', uid);
@@ -39,8 +25,9 @@ function mainProfileRef(uid) {
  * @returns {Promise<object|null>}
  */
 export async function getMainHealthProfile(uid) {
-  const snap = await getDoc(mainProfileRef(uid));
-  return snap.exists() ? snap.data() : null;
+  const r = await readDocResilient(mainProfileRef(uid));
+  if (!r.exists) return null;
+  return r.data() || null;
 }
 
 /**
@@ -63,22 +50,22 @@ export async function mergeMainHealthProfile(uid, data) {
  * @returns {() => void} unsubscribe
  */
 export function subscribeMainHealthProfile(uid, onNext, onError) {
-  return onSnapshot(
-    mainProfileRef(uid),
-    (snap) => onNext(snap.exists() ? snap.data() : null),
-    (err) => onError?.(err),
-  );
+  return subscribeMainProfileDocument(db, uid, {
+    onData: (snap) => onNext(snap.exists() ? snap.data() : null),
+    onHardError: (err) => onError?.(err),
+  });
 }
 
 /**
  * Persist onboarding + mirror into users/{uid} for existing Progress / useUser consumers.
  * @param {string} uid
  * @param {object} draft mainGoal, sex, age, heightCm, currentWeightKg, targetWeightKg, activityLevel;
- *   optional proteinGoalG, carbsGoalG, fatGoalG, dailyCaloriesTarget, goalTimelineWeeks
+ *   optional proteinGoalG, carbsGoalG, fatGoalG, dailyCaloriesTarget, goalTimelineWeeks;
+ *   optional preferencesUnits: 'metric'|'imperial' (stored under users/{uid}.preferences.units)
  */
 export async function saveCompleteHealthProfile(uid, draft) {
   try {
-    return await saveCompleteHealthProfileInner(uid, draft);
+    await saveCompleteHealthProfileInner(uid, draft);
   } catch (e) {
     onboardingLog('saveCompleteHealthProfile FAILED', e?.code, e?.message);
     throw e;
@@ -97,72 +84,52 @@ async function saveCompleteHealthProfileInner(uid, draft) {
     proteinGoalG,
     carbsGoalG,
     fatGoalG,
-    dailyCaloriesTarget,
-    goalTimelineWeeks,
+    dailyCaloriesTarget: draftDailyCalories,
+    goalTimelineWeeks: draftGoalTimelineWeeks,
+    preferencesUnits,
   } = draft;
-
-  const tdee = estimateTdee({
-    sex,
-    weightKg: currentWeightKg,
-    heightCm,
-    age,
-    activityLevel,
-  });
-  const recommendedCalories = calorieTargetFromGoal(mainGoal, tdee);
-  const recommendedMacros = macrosFromCaloriesAndGoal(
-    recommendedCalories,
-    mainGoal,
-    currentWeightKg,
-  );
 
   const hasCustomMacros =
     Number.isFinite(Number(proteinGoalG)) &&
     Number.isFinite(Number(carbsGoalG)) &&
     Number.isFinite(Number(fatGoalG));
 
-  let calorieTarget = recommendedCalories;
-  let macros = { ...recommendedMacros };
-
-  if (hasCustomMacros) {
-    const p = Math.round(Number(proteinGoalG));
-    const c = Math.round(Number(carbsGoalG));
-    const f = Math.round(Number(fatGoalG));
-    macros = { proteinG: p, carbsG: c, fatG: f, kcal: kcalFromMacros(p, c, f) };
-    calorieTarget =
-      Number.isFinite(Number(dailyCaloriesTarget)) && Number(dailyCaloriesTarget) > 0
-        ? Math.round(Number(dailyCaloriesTarget))
-        : macros.kcal;
-  }
-
-  const weeks =
-    Number.isFinite(Number(goalTimelineWeeks)) && Number(goalTimelineWeeks) >= 1
-      ? Math.min(260, Math.max(1, Math.round(Number(goalTimelineWeeks))))
-      : null;
-
   const u = auth.currentUser;
+
+  /**
+   * Do not await ensureUserDocument (read + maybe create) — getDoc can hang on RN. A merge setDoc is enough.
+   * Merge a minimal users/{uid} shell so setDoc(merge) in syncUserHealthGoals has a stable target.
+   */
   if (u?.uid === uid) {
-    await ensureUserDocument(u);
-  }
-
-  let rootSnap = await getDoc(userRootRef(uid));
-  if (!rootSnap.exists() && u && u.uid === uid) {
-    await createUserDocument(u, {});
-    rootSnap = await getDoc(userRootRef(uid));
-  }
-  if (!rootSnap.exists()) {
-    const err = new Error(
-      'Could not create your user document in Firebase. Sign out and sign in again, or check your connection.',
+    await setDoc(
+      userRootRef(uid),
+      {
+        uid: u.uid,
+        email: u.email || '',
+        displayName: u.displayName || '',
+        photoURL: u.photoURL || '',
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
     );
-    onboardingLog('saveCompleteHealthProfile abort: no users/{uid} doc', { uid });
-    throw err;
   }
 
-  const prevMain = await getDoc(mainProfileRef(uid));
-  const createdAt = prevMain.exists() ? prevMain.data().createdAt : serverTimestamp();
+  /**
+   * Do not call readDocResilient(users/{uid}) here — getDoc can hang indefinitely on RN when the
+   * channel is wedged; ensureUserDocument + setDoc(merge) above already establish the root for writes.
+   */
 
-  await setDoc(
-    mainProfileRef(uid),
-    {
+  const p = Math.round(Number(proteinGoalG));
+  const c = Math.round(Number(carbsGoalG));
+  const f = Math.round(Number(fatGoalG));
+
+  onboardingFlowLog('write started: syncUserHealthGoals (setOnboardingComplete, skipDependentReads)');
+  const { syncUserHealthGoals } = await import('@/services/userGoalSyncService');
+  await syncUserHealthGoals(uid, hasCustomMacros ? 'nutrition' : 'goals_weight', {
+    setOnboardingComplete: true,
+    skipDependentReads: true,
+    profileSexUi: sex === 'male' ? 'Male' : sex === 'female' ? 'Female' : 'Other',
+    mainOverrides: {
       mainGoal,
       sex,
       age: Number(age),
@@ -170,66 +137,60 @@ async function saveCompleteHealthProfileInner(uid, draft) {
       currentWeightKg: Number(currentWeightKg),
       targetWeightKg: Number(targetWeightKg),
       activityLevel,
-      isProfileComplete: true,
-      recommendedTdee: tdee,
-      recommendedCalories: recommendedCalories,
-      recommendedProteinG: recommendedMacros.proteinG,
-      recommendedCarbsG: recommendedMacros.carbsG,
-      recommendedFatG: recommendedMacros.fatG,
-      dailyCaloriesTarget: calorieTarget,
-      proteinGoalG: macros.proteinG,
-      carbsGoalG: macros.carbsG,
-      fatGoalG: macros.fatG,
-      ...(weeks != null ? { goalTimelineWeeks: weeks } : {}),
-      createdAt,
-      updatedAt: serverTimestamp(),
+      ...(Number.isFinite(Number(draftDailyCalories)) && Number(draftDailyCalories) >= 400
+        ? { dailyCaloriesTarget: Math.round(Number(draftDailyCalories)) }
+        : {}),
+      ...(hasCustomMacros ? { proteinGoalG: p, carbsGoalG: c, fatGoalG: f } : {}),
+      ...(mainGoal !== MAIN_GOAL.MAINTAIN_WEIGHT &&
+      draftGoalTimelineWeeks != null &&
+      Number.isFinite(Number(draftGoalTimelineWeeks))
+        ? {
+            goalTimelineWeeks: Math.min(
+              260,
+              Math.max(1, Math.round(Number(draftGoalTimelineWeeks))),
+            ),
+          }
+        : {}),
     },
-    { merge: true },
-  );
-
-  const userDoc = await getUserDocument(uid);
-  const prevProfile = userDoc?.profile || {};
-  const prevGoals = userDoc?.goals || {};
-
-  const appGoalType = mainGoalToAppGoalType(mainGoal);
-
-  await updateDoc(userRootRef(uid), {
-    profileCompleted: true,
-    onboardingCompleted: true,
-    profile: {
-      ...prevProfile,
-      sex: sex === 'male' ? 'Male' : 'Female',
-      height: Number(heightCm),
-      weight: Number(currentWeightKg),
-      currentWeight: Number(currentWeightKg),
-      activityLevel: activityLevelToLabel(activityLevel),
-      age: Number(age),
-    },
-    goals: {
-      ...prevGoals,
-      type: appGoalType,
-      startWeight: Number(currentWeightKg),
-      currentWeight: Number(currentWeightKg),
-      targetWeight: Number(targetWeightKg),
-      calorieTarget,
-      calories: calorieTarget,
-      protein: macros.proteinG,
-      carbs: macros.carbsG,
-      fat: macros.fatG,
-      ...(weeks != null ? { goalTimelineWeeks: weeks } : {}),
-    },
-    updatedAt: serverTimestamp(),
+    ...(hasCustomMacros
+      ? {
+          nutrition: {
+            edited: 'macros',
+            proteinG: p,
+            carbsG: c,
+            fatG: f,
+            calories: 0,
+          },
+        }
+      : {}),
   });
 
-  try {
-    await upsertWeightEntry(uid, {
-      dateKey: todayDateKey(),
-      weightKg: Number(currentWeightKg),
-    });
-  } catch {
-    /* weight log optional */
+  if (preferencesUnits === 'metric' || preferencesUnits === 'imperial') {
+    try {
+      await patchUserDocument(uid, { preferences: { units: preferencesUnits } });
+      onboardingFlowLog('preferences.units saved', preferencesUnits);
+    } catch (e) {
+      onboardingFlowLog('preferences.units save failed (non-fatal)', e?.code, e?.message);
+    }
   }
 
+  /**
+   * Never await upsertWeightEntry on the onboarding critical path — it uses getDoc/getDocs which can
+   * hang; weight sync is optional and can complete in the background after navigation.
+   */
+  void (async () => {
+    try {
+      await upsertWeightEntry(uid, {
+        dateKey: todayDateKey(),
+        weightKg: Number(currentWeightKg),
+      });
+      onboardingFlowLog('deferred weight entry OK');
+    } catch (e) {
+      onboardingFlowLog('deferred weight entry skipped/failed', e?.code, e?.message);
+    }
+  })();
+
+  onboardingFlowLog('write succeeded: users/{uid} + profile/main + completion flags');
   onboardingLog('saveCompleteHealthProfile OK', {
     uid,
     profileCompleted: true,

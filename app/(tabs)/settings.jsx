@@ -142,8 +142,8 @@ export default function SettingsScreen() {
           <SettingsRow
             icon={<Target size={16} color="#FFFFFF" />}
             iconBg="#2DA89E"
-            label="Edit nutrition goals"
-            subtitle="Calories, macros & targets"
+            label="Edit macro goals"
+            subtitle="Daily protein, carbs, fat & calories"
             onPress={() => router.push('/(settings)/nutrition-goals')}
           />
           <SettingsRow

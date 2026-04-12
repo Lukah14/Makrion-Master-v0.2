@@ -8,7 +8,8 @@ import {
   GoogleAuthProvider,
   signInWithPopup,
 } from 'firebase/auth';
-import { auth } from '@/lib/firebase';
+import { disableNetwork, enableNetwork } from 'firebase/firestore';
+import { auth, db } from '@/lib/firebase';
 import { createUserDocument, ensureUserDocument } from './userService';
 
 export async function signUp(email, password, displayName) {
@@ -27,7 +28,17 @@ export async function signIn(email, password) {
 }
 
 export async function signOutUser() {
+  try {
+    await disableNetwork(db);
+  } catch {
+    /* ignore */
+  }
   await signOut(auth);
+  try {
+    await enableNetwork(db);
+  } catch {
+    /* ignore */
+  }
 }
 
 export async function resetPassword(email) {

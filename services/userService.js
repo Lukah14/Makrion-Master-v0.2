@@ -1,11 +1,7 @@
-import {
-  doc,
-  getDoc,
-  setDoc,
-  updateDoc,
-  serverTimestamp,
-} from 'firebase/firestore';
+import { doc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { readDocResilient } from '@/lib/firestoreResilientRead';
+import { isFirestoreTargetIdError } from '@/lib/firestoreRnErrors';
 
 function numOrNull(v) {
   const n = Number(v);
@@ -21,7 +17,7 @@ function numOrNull(v) {
 function assignNested(prefix, obj, out) {
   if (!obj || typeof obj !== 'object') return;
   for (const [k, v] of Object.entries(obj)) {
-    if (v === undefined || v === null) continue;
+    if (v === undefined) continue;
     out[`${prefix}.${k}`] = v;
   }
 }
@@ -32,6 +28,7 @@ function assignNested(prefix, obj, out) {
  * @param {{ profile?: object, goals?: object, preferences?: object, displayName?: string, photoURL?: string }} partial
  */
 export async function patchUserDocument(uid, partial) {
+  await ensureUserRootShell(uid);
   const updates = { updatedAt: serverTimestamp() };
   if (partial.displayName !== undefined) updates.displayName = partial.displayName;
   if (partial.photoURL !== undefined) updates.photoURL = partial.photoURL;
@@ -45,14 +42,14 @@ export async function patchUserDocument(uid, partial) {
  * Mirror key health/nutrition fields from users/{uid} into profiles/{uid} for services that read profiles.
  */
 export async function syncProfilesFromUserDoc(uid) {
-  const uSnap = await getDoc(userRef(uid));
-  if (!uSnap.exists()) return;
-  const u = uSnap.data();
+  const uRead = await readDocResilient(userRef(uid));
+  if (!uRead.exists) return;
+  const u = uRead.data() || {};
   const up = u.profile || {};
   const ug = u.goals || {};
   const pref = doc(db, 'profiles', uid);
-  const pSnap = await getDoc(pref);
-  const existing = pSnap.exists() ? pSnap.data() : {};
+  const pRead = await readDocResilient(pref);
+  const existing = pRead.exists ? pRead.data() || {} : {};
 
   const body = {
     ...(existing.body || {}),
@@ -81,19 +78,24 @@ export async function syncProfilesFromUserDoc(uid) {
     stepGoal: numOrNull(ug.stepsGoal),
   };
 
-  await setDoc(
-    pref,
-    {
-      uid,
-      email: u.email || '',
-      displayName: u.displayName || '',
-      photoURL: u.photoURL || null,
-      body,
-      goals: pGoals,
-      updatedAt: serverTimestamp(),
-    },
-    { merge: true },
-  );
+  const payload = {
+    uid,
+    email: u.email || '',
+    displayName: u.displayName || '',
+    photoURL: u.photoURL || null,
+    body,
+    goals: pGoals,
+    updatedAt: serverTimestamp(),
+  };
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      await setDoc(pref, payload, { merge: true });
+      return;
+    } catch (e) {
+      if (!isFirestoreTargetIdError(e) || attempt === 5) throw e;
+      await new Promise((r) => setTimeout(r, Math.min(2000, 280 * attempt)));
+    }
+  }
 }
 
 function userRef(uid) {
@@ -102,8 +104,8 @@ function userRef(uid) {
 
 export async function createUserDocument(firebaseUser, extra = {}) {
   const ref = userRef(firebaseUser.uid);
-  const snap = await getDoc(ref);
-  if (snap.exists()) return;
+  const r = await readDocResilient(ref);
+  if (r.exists) return;
 
   await setDoc(ref, {
     uid: firebaseUser.uid,
@@ -146,21 +148,38 @@ export async function createUserDocument(firebaseUser, extra = {}) {
   });
 }
 
+/**
+ * Firestore `updateDoc(users/{uid})` fails if the document does not exist (common after partial sign-up
+ * or race before `ensureUserDocument`). Idempotent shell for all root updates.
+ */
+export async function ensureUserRootShell(uid) {
+  if (!uid || typeof uid !== 'string') return;
+  const r = await readDocResilient(userRef(uid));
+  if (r.exists) return;
+  await createUserDocument(
+    { uid, email: '', displayName: '', photoURL: '' },
+    {},
+  );
+}
+
 export async function getUserDocument(uid) {
-  const snap = await getDoc(userRef(uid));
-  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+  const r = await readDocResilient(userRef(uid));
+  if (!r.exists) return null;
+  const d = r.data();
+  return d ? { id: r.id, ...d } : null;
 }
 
 /** Ensure users/{uid} exists after sign-in (idempotent). */
 export async function ensureUserDocument(firebaseUser) {
   if (!firebaseUser?.uid) return;
-  const snap = await getDoc(userRef(firebaseUser.uid));
-  if (!snap.exists()) {
+  const r = await readDocResilient(userRef(firebaseUser.uid));
+  if (!r.exists) {
     await createUserDocument(firebaseUser, {});
   }
 }
 
 export async function updateUserProfile(uid, profileData) {
+  await ensureUserRootShell(uid);
   await updateDoc(userRef(uid), {
     profile: profileData,
     updatedAt: serverTimestamp(),
@@ -168,6 +187,7 @@ export async function updateUserProfile(uid, profileData) {
 }
 
 export async function updateUserGoals(uid, goals) {
+  await ensureUserRootShell(uid);
   await updateDoc(userRef(uid), {
     goals,
     updatedAt: serverTimestamp(),
@@ -175,6 +195,7 @@ export async function updateUserGoals(uid, goals) {
 }
 
 export async function updateUserPreferences(uid, preferences) {
+  await ensureUserRootShell(uid);
   await updateDoc(userRef(uid), {
     preferences,
     updatedAt: serverTimestamp(),
@@ -182,6 +203,7 @@ export async function updateUserPreferences(uid, preferences) {
 }
 
 export async function completeOnboarding(uid) {
+  await ensureUserRootShell(uid);
   await updateDoc(userRef(uid), {
     onboardingCompleted: true,
     updatedAt: serverTimestamp(),
@@ -189,6 +211,7 @@ export async function completeOnboarding(uid) {
 }
 
 export async function updateDisplayName(uid, displayName) {
+  await ensureUserRootShell(uid);
   await updateDoc(userRef(uid), {
     displayName,
     updatedAt: serverTimestamp(),

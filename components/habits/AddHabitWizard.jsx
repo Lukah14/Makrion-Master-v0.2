@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, Modal, StyleSheet, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, Modal, StyleSheet, Platform, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '@/context/ThemeContext';
 import StepDots from './StepDots';
@@ -14,6 +14,8 @@ import {
   normalizeNumericConditionType,
   NUMERIC_CONDITION,
 } from '@/lib/habitNumericCondition';
+import { deriveFrequencyStateFromHabit } from '@/lib/habitEditForm';
+import { validateFrequencyFormState } from '@/lib/habitFrequency';
 
 function parseGoalNumber(str) {
   const n = parseFloat(String(str ?? '').replace(',', '.').trim());
@@ -43,8 +45,12 @@ export default function AddHabitWizard({ visible, onClose, onSave, editingHabit 
     { label: 'All time goal', value: '' },
     { label: 'Single time goal', value: '' },
   ]);
-  const [repeatRule, setRepeatRule] = useState(editingHabit?.repeatRule || 'daily');
-  const [repeatDays, setRepeatDays] = useState(editingHabit?.repeatDays || []);
+  const [repeatRule, setRepeatRule] = useState('daily');
+  const [repeatDays, setRepeatDays] = useState([]);
+  const [yearlyDates, setYearlyDates] = useState([]);
+  const [cadenceCount, setCadenceCount] = useState(1);
+  const [cadenceUnit, setCadenceUnit] = useState('week');
+  const [intervalEvery, setIntervalEvery] = useState(2);
   const [endDateEnabled, setEndDateEnabled] = useState(editingHabit?.endDateEnabled || false);
   const [endDateDays, setEndDateDays] = useState(editingHabit?.endDateDays?.toString() || '60');
   const [showScheduleDetails, setShowScheduleDetails] = useState(false);
@@ -69,6 +75,10 @@ export default function AddHabitWizard({ visible, onClose, onSave, editingHabit 
     ]);
     setRepeatRule('daily');
     setRepeatDays([]);
+    setYearlyDates([]);
+    setCadenceCount(1);
+    setCadenceUnit('week');
+    setIntervalEvery(2);
     setEndDateEnabled(false);
     setEndDateDays('60');
     setShowScheduleDetails(false);
@@ -95,8 +105,13 @@ export default function AddHabitWizard({ visible, onClose, onSave, editingHabit 
       }
       setTargetUnit(editingHabit.unit || '');
       setChecklistItems(editingHabit.checklistItems || []);
-      setRepeatRule(editingHabit.repeatRule || 'daily');
-      setRepeatDays(editingHabit.repeatDays || []);
+      const f = deriveFrequencyStateFromHabit(editingHabit);
+      setRepeatRule(f.repeatRule);
+      setRepeatDays(f.repeatDays);
+      setYearlyDates(f.yearlyDates || []);
+      setCadenceCount(f.cadenceCount);
+      setCadenceUnit(f.cadenceUnit || 'week');
+      setIntervalEvery(f.intervalEvery);
       setEndDateEnabled(editingHabit.endDateEnabled || false);
       setEndDateDays(editingHabit.endDateDays?.toString() || '60');
       setShowScheduleDetails(false);
@@ -122,8 +137,31 @@ export default function AddHabitWizard({ visible, onClose, onSave, editingHabit 
     }
   };
 
+  const handleRepeatRuleChange = (id) => {
+    setRepeatRule(id);
+    if (id !== 'specific_days_week' && id !== 'specific_days_month') setRepeatDays([]);
+    if (id !== 'specific_days_year') setYearlyDates([]);
+    if (id === 'some_days_period') {
+      setCadenceCount(1);
+      setCadenceUnit('week');
+    }
+    if (id === 'repeat') setIntervalEvery(2);
+  };
+
   const handleNext = () => {
     if (currentStep === 4 && !showScheduleDetails) {
+      const v = validateFrequencyFormState({
+        repeatRule,
+        repeatDays,
+        yearlyDates,
+        cadenceCount,
+        cadenceUnit,
+        intervalEvery,
+      });
+      if (!v.ok) {
+        Alert.alert('Frequency', v.message || 'Check your schedule options.');
+        return;
+      }
       setShowScheduleDetails(true);
       return;
     }
@@ -133,6 +171,18 @@ export default function AddHabitWizard({ visible, onClose, onSave, editingHabit 
   };
 
   const handleSave = () => {
+    const fv = validateFrequencyFormState({
+      repeatRule,
+      repeatDays,
+      yearlyDates,
+      cadenceCount,
+      cadenceUnit,
+      intervalEvery,
+    });
+    if (!fv.ok) {
+      Alert.alert('Frequency', fv.message || 'Check your schedule options.');
+      return;
+    }
     const numericCondition =
       habitType === 'numeric' ? displayLabelToConditionType(condition) : 'at_least';
     let resolvedTarget = null;
@@ -163,6 +213,10 @@ export default function AddHabitWizard({ visible, onClose, onSave, editingHabit 
       checklistItems: habitType === 'checklist' ? checklistItems : null,
       repeatRule,
       repeatDays,
+      yearlyDates,
+      cadenceCount,
+      cadenceUnit,
+      intervalEvery,
       startDate:
         (typeof editingHabit?.startDate === 'string' && editingHabit.startDate.length >= 10
           ? editingHabit.startDate.slice(0, 10)
@@ -267,9 +321,17 @@ export default function AddHabitWizard({ visible, onClose, onSave, editingHabit 
           {currentStep === 4 && (
             <WizardStepSchedule
               repeatRule={repeatRule}
-              onRepeatRuleChange={setRepeatRule}
+              onRepeatRuleChange={handleRepeatRuleChange}
               repeatDays={repeatDays}
               onRepeatDaysChange={setRepeatDays}
+              yearlyDates={yearlyDates}
+              onYearlyDatesChange={setYearlyDates}
+              cadenceCount={cadenceCount}
+              onCadenceCountChange={setCadenceCount}
+              cadenceUnit={cadenceUnit}
+              onCadenceUnitChange={setCadenceUnit}
+              intervalEvery={intervalEvery}
+              onIntervalEveryChange={setIntervalEvery}
               endDateEnabled={endDateEnabled}
               onEndDateEnabledChange={setEndDateEnabled}
               endDateDays={endDateDays}

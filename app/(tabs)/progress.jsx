@@ -51,8 +51,8 @@ function WeightView({ dateKey, bumpCalendarRefresh, weightSheet, setWeightSheet 
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
   const { user } = useAuth();
-  const { userData } = useUser();
-  const userGoals = userData?.goals || null;
+  const { userData, resolvedGoals } = useUser();
+  const userGoals = resolvedGoals ?? userData?.goals ?? null;
 
   const [goal, setGoal] = useState({
     type: userGoals?.type || 'Fat Loss',
@@ -62,7 +62,10 @@ function WeightView({ dateKey, bumpCalendarRefresh, weightSheet, setWeightSheet 
     calorieTarget: userGoals?.calorieTarget ?? null,
     autoAdjustments: userGoals?.autoAdjustments ?? true,
     weeklyRate: userGoals?.weeklyRate || 0.5,
-    weeksToGoal: userGoals?.weeksToGoal ?? null,
+    weeksToGoal: userGoals?.weeksToGoal ?? userGoals?.goalTimelineWeeks ?? null,
+    goalTimelineWeeks: userGoals?.goalTimelineWeeks ?? userGoals?.weeksToGoal ?? null,
+    expectedWeeklyChangeKg: userGoals?.expectedWeeklyChangeKg ?? null,
+    estimatedGoalDate: userGoals?.estimatedGoalDate ?? null,
     notes: userGoals?.notes || '',
   });
 
@@ -77,6 +80,10 @@ function WeightView({ dateKey, bumpCalendarRefresh, weightSheet, setWeightSheet 
         startWeight: userGoals.startWeight ?? prev.startWeight,
         targetWeight: userGoals.targetWeight ?? prev.targetWeight,
         calorieTarget: userGoals.calorieTarget ?? prev.calorieTarget,
+        weeksToGoal: userGoals.weeksToGoal ?? userGoals.goalTimelineWeeks ?? prev.weeksToGoal,
+        goalTimelineWeeks: userGoals.goalTimelineWeeks ?? userGoals.weeksToGoal ?? prev.goalTimelineWeeks,
+        expectedWeeklyChangeKg: userGoals.expectedWeeklyChangeKg ?? prev.expectedWeeklyChangeKg,
+        estimatedGoalDate: userGoals.estimatedGoalDate ?? prev.estimatedGoalDate,
       }));
     }
   }, [userGoals]);

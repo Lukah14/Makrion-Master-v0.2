@@ -10,21 +10,13 @@ import {
   conditionTypeToDisplayLabel,
   NUMERIC_CONDITION,
 } from '@/lib/habitNumericCondition';
+import { formatHabitFrequencyLabel } from '@/lib/habitEditForm';
 
 const TYPE_LABELS = {
   yesno: 'Yes/No',
   numeric: 'Numeric',
   timer: 'Timer',
   checklist: 'Checklist',
-};
-
-const REPEAT_LABELS = {
-  daily: 'Every day',
-  specific_days_week: 'Specific days of week',
-  specific_days_month: 'Specific days of month',
-  specific_days_year: 'Specific days of year',
-  some_days_period: 'Some days per period',
-  repeat: 'Repeat',
 };
 
 export default function HabitDetailSheet({ habit, visible, onClose, onEdit, onSkip, onDelete, onDuplicate }) {
@@ -116,7 +108,7 @@ export default function HabitDetailSheet({ habit, visible, onClose, onEdit, onSk
               <View style={styles.detailRow}>
                 <Calendar size={16} color={Colors.textTertiary} />
                 <Text style={styles.detailLabel}>Repeat</Text>
-                <Text style={styles.detailValue}>{REPEAT_LABELS[habit.repeatRule] || 'Daily'}</Text>
+                <Text style={styles.detailValue}>{formatHabitFrequencyLabel(habit)}</Text>
               </View>
               {habit.type === 'numeric' && (
                 <>

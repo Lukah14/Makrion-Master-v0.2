@@ -66,7 +66,7 @@ export default function HomeScreen() {
   const { dateKey, bumpCalendarRefresh, calendarRefreshKey } = useNutritionDate();
 
   const { user } = useAuth();
-  const { userData: userDoc } = useUser();
+  const { userData: userDoc, resolvedGoals } = useUser();
   const foodLog = useFoodLog(dateKey);
   const {
     habits: allHabitsUi,
@@ -79,9 +79,9 @@ export default function HomeScreen() {
   const {
     waterData,
     loading: waterLoading,
-    addGlass,
-    removeGlass,
+    setGlasses,
     updateGoalMl,
+    adjustMl,
   } = useWater(dateKey);
 
   const domainStreaks = useDomainStreaks(calendarRefreshKey);
@@ -95,32 +95,31 @@ export default function HomeScreen() {
 
   const syncWaterGlasses = useCallback(
     async (targetCount) => {
-      let g = waterData.glasses;
-      while (targetCount < g) {
-        await removeGlass(250);
-        g -= 1;
-      }
-      while (targetCount > g) {
-        await addGlass(250);
-        g += 1;
-      }
+      const next = Math.max(0, Math.round(Number(targetCount) || 0));
+      await setGlasses(next, 250);
       bumpCalendarRefresh();
     },
-    [waterData.glasses, addGlass, removeGlass, bumpCalendarRefresh],
+    [setGlasses, bumpCalendarRefresh],
   );
 
   const onWaterDeltaMl = useCallback(
     async (deltaMl) => {
-      const steps = Math.round(Math.abs(deltaMl) / 250);
-      if (steps === 0) return;
-      if (deltaMl < 0) {
-        for (let i = 0; i < steps; i += 1) await removeGlass(250);
-      } else {
-        for (let i = 0; i < steps; i += 1) await addGlass(250);
-      }
+      const d = Math.round(Number(deltaMl) || 0);
+      if (d === 0) return;
+      await adjustMl(d);
       bumpCalendarRefresh();
     },
-    [addGlass, removeGlass, bumpCalendarRefresh],
+    [adjustMl, bumpCalendarRefresh],
+  );
+
+  const onWaterCustomMl = useCallback(
+    async (ml, mode) => {
+      const n = Math.round(Number(ml) || 0);
+      if (!Number.isFinite(n) || n <= 0) return;
+      await adjustMl(mode === 'add' ? n : -n);
+      bumpCalendarRefresh();
+    },
+    [adjustMl, bumpCalendarRefresh],
   );
 
   const onWaterGoalChange = useCallback(
@@ -135,11 +134,17 @@ export default function HomeScreen() {
   const stepsState = useSteps(dateKey, calendarRefreshKey);
   const progress = useProgress();
 
-  const goals = userDoc?.goals || {};
-  const calTarget = goals.calories || 0;
-  const protTarget = goals.protein || 0;
-  const carbTarget = goals.carbs || 0;
-  const fatTarget = goals.fat || 0;
+  useFocusEffect(
+    useCallback(() => {
+      progress.reload();
+    }, [progress.reload]),
+  );
+
+  const goals = resolvedGoals ?? userDoc?.goals ?? {};
+  const calTarget = Number(goals.calories ?? goals.calorieTarget) || 0;
+  const protTarget = Number(goals.protein ?? goals.proteinGoal) || 0;
+  const carbTarget = Number(goals.carbs ?? goals.carbsGoal) || 0;
+  const fatTarget = Number(goals.fat ?? goals.fatGoal) || 0;
   const defaultWaterGoalMl = Math.round((Number(goals.water) || 2.5) * 1000);
   const effectiveWaterGoalMl =
     waterData.goalMl != null && waterData.goalMl > 0 ? waterData.goalMl : defaultWaterGoalMl;
@@ -175,11 +180,15 @@ export default function HomeScreen() {
   }));
 
   const activityData = {
-    caloriesBurned: activityLog.totalCaloriesBurned || 0,
-    activeMinutes: activityLog.entries.reduce((sum, e) => sum + (e.durationMinutes || 0), 0),
+    caloriesBurned: Math.round(activityLog.totalCaloriesBurned || 0),
+    activeMinutes: activityLog.entries.reduce(
+      (sum, e) => sum + (Number(e.durationMinutes) || 0),
+      0,
+    ),
     steps: stepsState.steps,
     stepsGoal: stepsState.goal,
     stepProgress: stepsState.stepProgressPercent,
+    activityCount: activityLog.entries.length,
   };
 
   const dashboardHabits = useMemo(
@@ -255,6 +264,11 @@ export default function HomeScreen() {
     userDoc?.currentWeight,
     goals.targetWeight,
     goals.startWeight,
+    goals.calories,
+    goals.calorieTarget,
+    goals.protein,
+    goals.carbs,
+    goals.fat,
   ]);
 
   const recentlyLogged = [];
@@ -408,7 +422,7 @@ export default function HomeScreen() {
           onClearMeal={handleClearMeal}
         />
 
-        <ActivitySummary data={activityData} />
+        <ActivitySummary data={activityData} dateLabel={formatDateLabel(dateKey)} />
 
         <HabitsSummary
           habits={dashboardHabits}
@@ -429,6 +443,7 @@ export default function HomeScreen() {
             await syncWaterGlasses(next);
           }}
           onDeltaMl={onWaterDeltaMl}
+          onCustomMl={onWaterCustomMl}
           onChangeGoalMl={onWaterGoalChange}
         />
 

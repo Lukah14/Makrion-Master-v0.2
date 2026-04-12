@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import {
   collection,
   doc,
@@ -13,6 +14,29 @@ import {
   onSnapshot,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+
+const FOOD_LOG_BUCKET_DESTROY_MS = Platform.OS === 'android' ? 2500 : 400;
+
+function cancelFoodBucketDestroy(bucket) {
+  if (bucket.pendingDestroyTimer != null) {
+    clearTimeout(bucket.pendingDestroyTimer);
+    bucket.pendingDestroyTimer = null;
+  }
+}
+
+/** RN: re-attaching on this error races Firestore watch state → INTERNAL ASSERTION / ca9. Ignore like profile buckets. */
+function isTargetIdConflict(err) {
+  return /Target ID already exists/i.test(err?.message || String(err));
+}
+
+const FOOD_TARGET_ID_LOG_THROTTLE_MS = 30_000;
+
+/** One listener per (uid, date); Home + Nutrition tabs often mount both. */
+const foodLogBuckets = new Map();
+
+function foodLogBucketKey(uid, date) {
+  return `${uid}__${date}`;
+}
 
 // ─── Nutrition calculation helpers ─────────────────────────────────────────────
 
@@ -154,20 +178,106 @@ export async function listFoodLogEntries(uid, date) {
 }
 
 /**
- * Real-time listener for one day's food log.
+ * Real-time listener for one day's food log (shared if multiple components use the same day).
  * @returns {() => void} unsubscribe
  */
 export function subscribeFoodLogEntries(uid, date, onNext, onError) {
-  const q = query(entriesRef(uid, date), orderBy('createdAt'));
-  return onSnapshot(
-    q,
-    (snap) => {
-      onNext(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    },
-    (err) => {
-      if (onError) onError(err);
+  const k = foodLogBucketKey(uid, date);
+  let bucket = foodLogBuckets.get(k);
+  if (!bucket) {
+    bucket = {
+      listeners: new Map(),
+      nextId: 0,
+      unsub: null,
+      destroyed: false,
+      lastTargetIdLogAt: 0,
+      pendingDestroyTimer: null,
+      uid,
+      date,
+    };
+    foodLogBuckets.set(k, bucket);
+  }
+
+  cancelFoodBucketDestroy(bucket);
+  bucket.destroyed = false;
+
+  const id = ++bucket.nextId;
+  bucket.listeners.set(id, { onNext, onError });
+
+  const broadcast = (list) => {
+    for (const l of bucket.listeners.values()) {
+      try {
+        l.onNext(list);
+      } catch (e) {
+        if (__DEV__) {
+          // eslint-disable-next-line no-console
+          console.warn('[foodLog] subscriber onNext error', e);
+        }
+      }
     }
-  );
+  };
+
+  const broadcastErr = (err) => {
+    for (const l of bucket.listeners.values()) {
+      try {
+        l.onError?.(err);
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+
+  const detach = () => {
+    try {
+      bucket.unsub?.();
+    } catch {
+      /* ignore */
+    }
+    bucket.unsub = null;
+  };
+
+  const attach = () => {
+    if (bucket.destroyed) return;
+    detach();
+    const q = query(entriesRef(bucket.uid, bucket.date), orderBy('createdAt'));
+    bucket.unsub = onSnapshot(
+      q,
+      (snap) => {
+        broadcast(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      (err) => {
+        if (bucket.destroyed) return;
+        if (isTargetIdConflict(err)) {
+          const now = Date.now();
+          if (__DEV__ && now - bucket.lastTargetIdLogAt > FOOD_TARGET_ID_LOG_THROTTLE_MS) {
+            bucket.lastTargetIdLogAt = now;
+            // eslint-disable-next-line no-console
+            console.log('[foodLog] Target ID conflict (ignored; listener kept)', bucket.uid, bucket.date);
+          }
+          return;
+        }
+        broadcastErr(err);
+      },
+    );
+  };
+
+  if (bucket.listeners.size === 1 && !bucket.unsub) {
+    attach();
+  }
+
+  return () => {
+    bucket.listeners.delete(id);
+    if (bucket.listeners.size === 0) {
+      cancelFoodBucketDestroy(bucket);
+      bucket.pendingDestroyTimer = setTimeout(() => {
+        bucket.pendingDestroyTimer = null;
+        if (bucket.listeners.size > 0) return;
+        bucket.destroyed = true;
+        detach();
+        foodLogBuckets.delete(k);
+      }, FOOD_LOG_BUCKET_DESTROY_MS);
+    }
+  };
 }
 
 export async function updateFoodLogEntry(uid, date, entryId, changes) {

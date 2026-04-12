@@ -4,15 +4,20 @@ import Card from '@/components/common/Card';
 import SectionHeader from '@/components/common/SectionHeader';
 import { useTheme } from '@/context/ThemeContext';
 
-export default function ActivitySummary({ data }) {
+export default function ActivitySummary({ data, dateLabel }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
-  const stepPercent = Math.min((data.steps / data.stepsGoal) * 100, 100);
+  const stepPercent = Math.min((data.steps / (data.stepsGoal || 1)) * 100, 100);
+  const title = dateLabel ? `Activity · ${dateLabel}` : "Today's Activity";
 
   return (
     <View>
-      <SectionHeader title="Today's Activity" actionText="Details" />
+      <SectionHeader title={title} actionText="Details" />
       <Card>
+        <Text style={styles.activityMeta}>
+          {data.activityCount ?? 0} activit{(data.activityCount ?? 0) === 1 ? 'y' : 'ies'} ·{' '}
+          {Math.round(data.activeMinutes ?? 0)} min total
+        </Text>
         <View style={styles.statsRow}>
           <View style={styles.statItem}>
             <View style={[styles.iconCircle, { backgroundColor: Colors.caloriesLight }]}>
@@ -62,6 +67,12 @@ export default function ActivitySummary({ data }) {
 }
 
 const createStyles = (Colors) => StyleSheet.create({
+  activityMeta: {
+    fontSize: 13,
+    fontFamily: 'PlusJakartaSans-SemiBold',
+    color: Colors.textSecondary,
+    marginBottom: 12,
+  },
   statsRow: {
     flexDirection: 'row',
     justifyContent: 'space-around',

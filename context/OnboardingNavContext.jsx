@@ -8,6 +8,7 @@ import {
   useRef,
 } from 'react';
 import { useAuth } from '@/context/AuthContext';
+import { flowLog } from '@/lib/flowLog';
 
 const Ctx = createContext(null);
 
@@ -29,6 +30,7 @@ export function OnboardingNavProvider({ children }) {
   }, [user?.uid]);
 
   const notifyProfileSaved = useCallback(() => {
+    flowLog('PROFILE_COMPLETE_FLAG_SET', { source: 'notifyProfileSaved', localLatch: true });
     saveSucceededRef.current = true;
     setSaved(true);
     setGateRevision((n) => n + 1);

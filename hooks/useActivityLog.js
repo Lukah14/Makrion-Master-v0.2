@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import {
+  subscribeActivityEntries,
   listActivityEntries,
   addActivityEntry,
   updateActivityEntry,
@@ -15,28 +16,31 @@ export function useActivityLog(date) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const load = useCallback(async () => {
+  useEffect(() => {
     if (!user || !date) {
       setEntries([]);
       setLoading(false);
-      return;
+      setError(null);
+      return undefined;
     }
     setLoading(true);
-    try {
-      setError(null);
-      const data = await listActivityEntries(user.uid, date);
-      setEntries(data);
-    } catch (err) {
-      setEntries([]);
-      setError(err.message || String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [user, date]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+    setError(null);
+    const unsub = subscribeActivityEntries(
+      user.uid,
+      date,
+      (rows) => {
+        setEntries(rows);
+        setLoading(false);
+        setError(null);
+      },
+      (err) => {
+        setEntries([]);
+        setError(err?.message || String(err));
+        setLoading(false);
+      },
+    );
+    return () => unsub();
+  }, [user?.uid, date]);
 
   async function syncDashboardDailyLog() {
     if (!user?.uid || !date) return;
@@ -52,7 +56,6 @@ export function useActivityLog(date) {
       throw new Error('You must be signed in to save activities.');
     }
     const id = await addActivityEntry(user.uid, date, data);
-    await load();
     await syncDashboardDailyLog();
     return id;
   }
@@ -62,7 +65,6 @@ export function useActivityLog(date) {
       throw new Error('You must be signed in to update activities.');
     }
     await updateActivityEntry(user.uid, date, entryId, changes);
-    await load();
     await syncDashboardDailyLog();
   }
 
@@ -71,9 +73,19 @@ export function useActivityLog(date) {
       throw new Error('You must be signed in to delete activities.');
     }
     await deleteActivityEntry(user.uid, date, entryId);
-    await load();
     await syncDashboardDailyLog();
   }
+
+  const reload = useCallback(async () => {
+    if (!user?.uid || !date) return;
+    try {
+      const data = await listActivityEntries(user.uid, date);
+      setEntries(data);
+      setError(null);
+    } catch (e) {
+      setError(e?.message || String(e));
+    }
+  }, [user?.uid, date]);
 
   const totalCaloriesBurned = calcTotalCaloriesBurned(entries);
 
@@ -85,6 +97,6 @@ export function useActivityLog(date) {
     addEntry,
     editEntry,
     removeEntry,
-    reload: load,
+    reload,
   };
 }

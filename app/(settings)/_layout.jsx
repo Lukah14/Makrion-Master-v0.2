@@ -19,7 +19,7 @@ export default function SettingsStackLayout() {
       }}
     >
       <Stack.Screen name="personal" options={{ title: 'Personal details' }} />
-      <Stack.Screen name="nutrition-goals" options={{ title: 'Nutrition goals' }} />
+      <Stack.Screen name="nutrition-goals" options={{ title: 'Edit macro goals' }} />
       <Stack.Screen name="goals-weight" options={{ title: 'Goals & weight' }} />
       <Stack.Screen name="weight-history" options={{ title: 'Weight history' }} />
     </Stack>

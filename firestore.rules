@@ -94,8 +94,13 @@ service cloud.firestore {
         allow read, write: if isOwner(uid);
       }
 
-      // Water logs
+      // Water logs (legacy)
       match /waterLogs/{date} {
+        allow read, write: if isOwner(uid);
+      }
+
+      // Per-day shell: waterMl, waterGoalMl, etc. (YYYY-MM-DD doc id)
+      match /dailyLogs/{dateKey} {
         allow read, write: if isOwner(uid);
       }
 

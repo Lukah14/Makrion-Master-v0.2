@@ -17,6 +17,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { getUserProfile } from './profileService';
+import { getWaterLog } from '@/services/waterService';
 import { getActiveHabitsForDate } from '@/lib/habitSchedule';
 
 function dailyLogRef(uid, dateKey) {
@@ -139,6 +140,12 @@ export async function recalculateDailyLog(uid, dateKey) {
     habitsTotal = getActiveHabitsForDate(allHabits, dateKey).length;
   } catch (_) { /* ok */ }
 
+  let waterMl = 0;
+  try {
+    const w = await getWaterLog(uid, dateKey);
+    waterMl = Math.max(0, Math.round(Number(w?.waterMl ?? w?.totalMl) || 0));
+  } catch (_) { /* ok */ }
+
   const payload = {
     dateKey,
     uid,
@@ -148,7 +155,7 @@ export async function recalculateDailyLog(uid, dateKey) {
     protein: Math.round(protein),
     carbs: Math.round(carbs),
     fat: Math.round(fat),
-    waterMl: 0,
+    waterMl,
     habitsCompleted,
     habitsTotal,
     mealTotals_breakfast: roundMealTotals(mealBuckets.breakfast),

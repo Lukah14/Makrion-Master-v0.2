@@ -3,6 +3,7 @@
  * Filter by `date` (YYYY-MM-DD).
  */
 
+import { Platform } from 'react-native';
 import {
   collection,
   doc,
@@ -14,12 +15,22 @@ import {
   query,
   where,
   serverTimestamp,
+  onSnapshot,
 } from 'firebase/firestore';
 import { db, auth } from '@/lib/firebase';
 import { devLogFirestore, formatFirestoreError } from '@/lib/firestoreDebug';
 import { waitForAuthUser } from '@/lib/waitForAuthUser';
 import { estimateCaloriesBurnedFromKcalPerHour80kg } from '@/lib/caloriesBurned';
 import { resolveActivityUserWeightKg } from '@/lib/activityUserWeight';
+
+const ACTIVITY_BUCKET_DESTROY_MS = Platform.OS === 'android' ? 2500 : 400;
+
+function cancelActivityBucketDestroy(bucket) {
+  if (bucket.pendingDestroyTimer != null) {
+    clearTimeout(bucket.pendingDestroyTimer);
+    bucket.pendingDestroyTimer = null;
+  }
+}
 
 function logActivityError(context, e) {
   const code = e?.code ?? '';
@@ -280,4 +291,127 @@ export async function deleteActivityEntry(uid, _dateKey, entryId) {
 
 export function calcTotalCaloriesBurned(entries) {
   return entries.reduce((sum, e) => sum + (Number(e.caloriesBurned) || 0), 0);
+}
+
+function isTargetIdConflict(err) {
+  return /Target ID already exists/i.test(err?.message || String(err));
+}
+
+const ACTIVITY_TARGET_ID_LOG_THROTTLE_MS = 30_000;
+
+const activityBuckets = new Map();
+
+function activityBucketKey(uid, dateKey) {
+  return `${uid}__${dateKey}`;
+}
+
+/**
+ * Real-time activities for one calendar day (shared listener per uid+date).
+ * @returns {() => void} unsubscribe
+ */
+export function subscribeActivityEntries(uid, dateKey, onNext, onError) {
+  const k = activityBucketKey(uid, dateKey);
+  let bucket = activityBuckets.get(k);
+  if (!bucket) {
+    bucket = {
+      listeners: new Map(),
+      nextId: 0,
+      unsub: null,
+      destroyed: false,
+      lastTargetIdLogAt: 0,
+      pendingDestroyTimer: null,
+      uid,
+      dateKey,
+    };
+    activityBuckets.set(k, bucket);
+  }
+
+  cancelActivityBucketDestroy(bucket);
+  bucket.destroyed = false;
+
+  const id = ++bucket.nextId;
+  bucket.listeners.set(id, { onNext, onError });
+
+  const broadcast = (rows) => {
+    for (const l of bucket.listeners.values()) {
+      try {
+        l.onNext(rows);
+      } catch (e) {
+        if (__DEV__) {
+          // eslint-disable-next-line no-console
+          console.warn('[activity] subscriber onNext error', e);
+        }
+      }
+    }
+  };
+
+  const broadcastErr = (err) => {
+    for (const l of bucket.listeners.values()) {
+      try {
+        l.onError?.(err);
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+
+  const detach = () => {
+    try {
+      bucket.unsub?.();
+    } catch {
+      /* ignore */
+    }
+    bucket.unsub = null;
+  };
+
+  const attach = () => {
+    if (bucket.destroyed) return;
+    detach();
+    const q = query(activitiesRef(bucket.uid), where('date', '==', bucket.dateKey));
+    bucket.unsub = onSnapshot(
+      q,
+      (snap) => {
+        const rows = filterVisibleActivityEntries(
+          snap.docs.map((d) => ({ id: d.id, ...d.data() })),
+        );
+        rows.sort((a, b) => {
+          const da = String(a.date || '').localeCompare(String(b.date || ''));
+          if (da !== 0) return da;
+          return createdAtMillis(a) - createdAtMillis(b);
+        });
+        broadcast(rows);
+      },
+      (err) => {
+        if (bucket.destroyed) return;
+        if (isTargetIdConflict(err)) {
+          const now = Date.now();
+          if (__DEV__ && now - bucket.lastTargetIdLogAt > ACTIVITY_TARGET_ID_LOG_THROTTLE_MS) {
+            bucket.lastTargetIdLogAt = now;
+            // eslint-disable-next-line no-console
+            console.log('[activity] Target ID conflict (ignored; listener kept)', bucket.uid, bucket.dateKey);
+          }
+          return;
+        }
+        broadcastErr(err);
+      },
+    );
+  };
+
+  if (bucket.listeners.size === 1 && !bucket.unsub) {
+    attach();
+  }
+
+  return () => {
+    bucket.listeners.delete(id);
+    if (bucket.listeners.size === 0) {
+      cancelActivityBucketDestroy(bucket);
+      bucket.pendingDestroyTimer = setTimeout(() => {
+        bucket.pendingDestroyTimer = null;
+        if (bucket.listeners.size > 0) return;
+        bucket.destroyed = true;
+        detach();
+        activityBuckets.delete(k);
+      }, ACTIVITY_BUCKET_DESTROY_MS);
+    }
+  };
 }

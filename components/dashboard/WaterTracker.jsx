@@ -66,7 +66,7 @@ function WaterGlass({ fillPercent, idx, strokeColor }) {
 const SLOT_COUNT = 6;
 
 /**
- * @param {{ glasses: number, totalMl: number, goalMl: number, loading?: boolean, onGlassSlotPress: (slotIndex: number) => Promise<void>, onDeltaMl: (deltaMl: number) => Promise<void>, onChangeGoalMl: (ml: number) => Promise<void> }} props
+ * @param {{ glasses: number, totalMl: number, goalMl: number, loading?: boolean, onGlassSlotPress: (slotIndex: number) => Promise<void>, onDeltaMl: (deltaMl: number) => Promise<void>, onCustomMl: (ml: number, mode: 'add'|'subtract') => Promise<void>, onChangeGoalMl: (ml: number) => Promise<void> }} props
  */
 export default function WaterTracker({
   glasses,
@@ -75,6 +75,7 @@ export default function WaterTracker({
   loading = false,
   onGlassSlotPress,
   onDeltaMl,
+  onCustomMl,
   onChangeGoalMl,
 }) {
   const { colors: Colors } = useTheme();
@@ -86,12 +87,24 @@ export default function WaterTracker({
 
   const [goalModal, setGoalModal] = useState(false);
   const [customMl, setCustomMl] = useState(String(safeGoal));
+  /** @type {null | 'add' | 'subtract'} */
+  const [customVolumeModal, setCustomVolumeModal] = useState(null);
+  const [customVolumeInput, setCustomVolumeInput] = useState('250');
 
   const applyGoal = async (ml) => {
     const n = Math.round(Number(ml) || 0);
     if (n < 500 || n > 20000) return;
     await onChangeGoalMl(n);
     setGoalModal(false);
+  };
+
+  const applyCustomVolume = async () => {
+    const n = Math.round(Number(String(customVolumeInput).replace(/,/g, '.')) || 0);
+    if (!Number.isFinite(n) || n <= 0 || n > 5000) return;
+    if (!customVolumeModal) return;
+    await onCustomMl(n, customVolumeModal);
+    setCustomVolumeModal(null);
+    setCustomVolumeInput('250');
   };
 
   return (
@@ -136,17 +149,28 @@ export default function WaterTracker({
         ))}
       </View>
 
-      <View style={styles.buttonsRow}>
+      <View style={[styles.buttonsRow, styles.buttonsRowWrap]}>
         <TouchableOpacity
-          style={[styles.waterButton, styles.waterButtonOutline]}
-          onPress={() => onDeltaMl(-250)}
+          style={[styles.waterButtonQuad, styles.waterButtonOutline]}
+          onPress={() => {
+            setCustomVolumeInput('250');
+            setCustomVolumeModal('subtract');
+          }}
           activeOpacity={0.7}
           disabled={loading}
         >
-          <Text style={styles.waterButtonTextDark}>- 250</Text>
+          <Text style={styles.waterButtonTextDark}>-Custom</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.waterButton, styles.waterButtonTeal]}
+          style={[styles.waterButtonQuad, styles.waterButtonOutline]}
+          onPress={() => onDeltaMl(-250)}
+          activeOpacity={0.7}
+          disabled={loading || totalMl <= 0}
+        >
+          <Text style={styles.waterButtonTextDark}>-250</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.waterButtonQuad, styles.waterButtonTeal]}
           onPress={() => onDeltaMl(250)}
           activeOpacity={0.7}
           disabled={loading}
@@ -154,22 +178,53 @@ export default function WaterTracker({
           <Text style={styles.waterButtonTextColor}>+250</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.waterButton, styles.waterButtonTeal]}
-          onPress={() => onDeltaMl(500)}
+          style={[styles.waterButtonQuad, styles.waterButtonTeal]}
+          onPress={() => {
+            setCustomVolumeInput('250');
+            setCustomVolumeModal('add');
+          }}
           activeOpacity={0.7}
           disabled={loading}
         >
-          <Text style={styles.waterButtonTextColor}>+500</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.waterButton, styles.waterButtonTeal]}
-          onPress={() => onDeltaMl(750)}
-          activeOpacity={0.7}
-          disabled={loading}
-        >
-          <Text style={styles.waterButtonTextColor}>+750</Text>
+          <Text style={styles.waterButtonTextColor}>+Custom</Text>
         </TouchableOpacity>
       </View>
+
+      <Modal
+        visible={customVolumeModal != null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setCustomVolumeModal(null)}
+      >
+        <Pressable style={styles.modalOverlay} onPress={() => setCustomVolumeModal(null)}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <Pressable style={styles.modalBox} onPress={() => {}}>
+              <Text style={styles.modalTitle}>
+                {customVolumeModal === 'add' ? 'Add water (ml)' : 'Remove water (ml)'}
+              </Text>
+              <Text style={styles.modalHint}>1–5000 ml</Text>
+              <TextInput
+                style={styles.customInput}
+                value={customVolumeInput}
+                onChangeText={setCustomVolumeInput}
+                keyboardType="decimal-pad"
+                placeholder="250"
+                placeholderTextColor={Colors.textTertiary}
+              />
+              <TouchableOpacity
+                style={styles.saveGoalBtn}
+                onPress={() => void applyCustomVolume()}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.saveGoalBtnText}>Apply</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalCancel} onPress={() => setCustomVolumeModal(null)}>
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+            </Pressable>
+          </KeyboardAvoidingView>
+        </Pressable>
+      </Modal>
 
       <Modal visible={goalModal} transparent animationType="fade" onRequestClose={() => setGoalModal(false)}>
         <Pressable style={styles.modalOverlay} onPress={() => setGoalModal(false)}>
@@ -253,8 +308,20 @@ const createStyles = (Colors) => StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
   },
+  buttonsRowWrap: {
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
   waterButton: {
     flex: 1,
+    paddingVertical: 10,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  waterButtonQuad: {
+    width: '48%',
+    marginBottom: 8,
     paddingVertical: 10,
     borderRadius: 20,
     alignItems: 'center',

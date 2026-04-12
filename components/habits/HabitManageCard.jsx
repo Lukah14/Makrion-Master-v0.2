@@ -15,15 +15,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { Layout } from '@/constants/layout';
 import HabitWeekStrip from './HabitWeekStrip';
 import { habitIconMap, getIconForCategory } from './habitIconMap';
-
-const REPEAT_LABELS = {
-  daily: 'Every day',
-  specific_days_week: 'Specific days',
-  specific_days_month: 'Monthly',
-  specific_days_year: 'Yearly',
-  some_days_period: 'Periodic',
-  repeat: 'Repeat',
-};
+import { formatHabitFrequencyLabel } from '@/lib/habitEditForm';
 
 function getCompletionRate(completionHistory = []) {
   if (!completionHistory || completionHistory.length === 0) return 0;
@@ -113,7 +105,7 @@ export default function HabitManageCard({
       <View style={styles.topRow}>
         <View style={styles.titleBlock}>
           <Text style={styles.name} numberOfLines={1}>{habit.name}</Text>
-          <Text style={styles.repeatLabel}>{REPEAT_LABELS[habit.repeatRule] || 'Every day'}</Text>
+          <Text style={styles.repeatLabel}>{formatHabitFrequencyLabel(habit)}</Text>
         </View>
         <TouchableOpacity
           style={styles.moreHeaderBtn}

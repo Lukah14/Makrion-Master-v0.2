@@ -1,11 +1,12 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { todayDateKey, parseDateKey, toDateKey } from '@/lib/dateKey';
 import { dateKeysInclusive, computeDashboardCurrentStreak } from '@/lib/dashboardStreak';
-import { getDayDomainStrikeFlags } from '@/services/domainStrikeService';
+import { getDomainStrikeMapsForKeys } from '@/services/domainStrikeService';
 
 const LOOKBACK_DAYS = 400;
-const CHUNK = 8;
+/** Let profile + dashboard listeners attach before ~hundreds of getDocs (reduces RN Firestore wedging). */
+const STREAK_COLD_START_DELAY_MS = 2200;
 
 /**
  * Current consecutive-day strikes for Nutrition, Activity, and Habit Tracker (ends at real today).
@@ -13,6 +14,7 @@ const CHUNK = 8;
  */
 export function useDomainStreaks(refreshKey = 0) {
   const { user } = useAuth();
+  const streakColdStartPendingRef = useRef(true);
   const [nutritionStreak, setNutritionStreak] = useState(0);
   const [activityStreak, setActivityStreak] = useState(0);
   const [habitTrackerStreak, setHabitTrackerStreak] = useState(0);
@@ -37,22 +39,10 @@ export function useDomainStreaks(refreshKey = 0) {
       const startKey = toDateKey(startD);
       const keys = dateKeysInclusive(startKey, todayKey);
 
-      const nutritionMap = new Map();
-      const activityMap = new Map();
-      const habitMap = new Map();
-
-      for (let i = 0; i < keys.length; i += CHUNK) {
-        const slice = keys.slice(i, i + CHUNK);
-        const flagsList = await Promise.all(
-          slice.map((k) => getDayDomainStrikeFlags(user.uid, k)),
-        );
-        slice.forEach((k, idx) => {
-          const f = flagsList[idx];
-          nutritionMap.set(k, f.nutrition);
-          activityMap.set(k, f.activity);
-          habitMap.set(k, f.habitTracker);
-        });
-      }
+      const { nutritionMap, activityMap, habitMap } = await getDomainStrikeMapsForKeys(
+        user.uid,
+        keys,
+      );
 
       setNutritionStreak(computeDashboardCurrentStreak(nutritionMap, todayKey));
       setActivityStreak(computeDashboardCurrentStreak(activityMap, todayKey));
@@ -68,8 +58,21 @@ export function useDomainStreaks(refreshKey = 0) {
   }, [user?.uid, refreshKey]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    if (!user?.uid) {
+      streakColdStartPendingRef.current = true;
+      void load();
+      return undefined;
+    }
+    if (!streakColdStartPendingRef.current) {
+      void load();
+      return undefined;
+    }
+    const t = setTimeout(() => {
+      streakColdStartPendingRef.current = false;
+      void load();
+    }, STREAK_COLD_START_DELAY_MS);
+    return () => clearTimeout(t);
+  }, [load, user?.uid]);
 
   return {
     nutritionStreak,

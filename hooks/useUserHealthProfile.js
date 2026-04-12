@@ -1,61 +1,55 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
-import { doc, onSnapshot } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
-import { useAuth } from '@/context/AuthContext';
-import { isOnboardingCompleteFromUserDoc } from '@/lib/healthProfile';
-import { onboardingLog } from '@/lib/onboardingDebug';
+import { useEffect, useRef } from 'react';
+import { useUserProfileContext } from '@/context/UserProfileContext';
+import { onboardingLog, bootLog } from '@/lib/onboardingDebug';
+import { flowLog } from '@/lib/flowLog';
 
 /**
- * Live onboarding status from users/{uid} (same doc as useUser — always allowed by owner rules).
+ * Onboarding / gate fields — same Firestore streams as {@link useUser} (no second `users/{uid}` listener).
  */
 export function useUserHealthProfile() {
-  const { user } = useAuth();
-  const [userDoc, setUserDoc] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [retryToken, setRetryToken] = useState(0);
+  const ctx = useUserProfileContext();
+  const {
+    userData,
+    loading,
+    error,
+    onboardingComplete: complete,
+    retry,
+    profileResolved,
+    profileExists,
+  } = ctx;
+
+  const prevRef = useRef({});
 
   useEffect(() => {
-    if (!user?.uid) {
-      setUserDoc(null);
-      setLoading(false);
-      setError(null);
-      return undefined;
-    }
-
-    setLoading(true);
-    setError(null);
-
-    const ref = doc(db, 'users', user.uid);
-    const unsub = onSnapshot(
-      ref,
-      (snap) => {
-        setUserDoc(snap.exists() ? { id: snap.id, ...snap.data() } : null);
-        setLoading(false);
-        setError(null);
-      },
-      (err) => {
-        setError(err?.message || String(err));
-        setLoading(false);
-      },
-    );
-
-    return unsub;
-  }, [user?.uid, retryToken]);
-
-  const complete = useMemo(() => isOnboardingCompleteFromUserDoc(userDoc), [userDoc]);
-
-  useEffect(() => {
-    if (!user?.uid) return;
-    onboardingLog('useUserHealthProfile: complete =', complete, {
-      profileCompleted: userDoc?.profileCompleted,
-      onboardingCompleted: userDoc?.onboardingCompleted,
+    if (!userData?.id && !profileResolved) return;
+    const key = `${complete}:${profileResolved}`;
+    if (prevRef.current.key === key) return;
+    prevRef.current.key = key;
+    flowLog(complete ? 'PROFILE_COMPLETE' : 'PROFILE_INCOMPLETE', {
+      uid: userData?.id,
+      profileCompleted: userData?.profileCompleted,
+      onboardingCompleted: userData?.onboardingCompleted,
+      fromMainProfile: complete && !userData?.profileCompleted,
     });
-  }, [user?.uid, complete, userDoc?.profileCompleted, userDoc?.onboardingCompleted]);
+    bootLog(complete ? 'profile complete' : 'profile incomplete', {
+      profileCompleted: userData?.profileCompleted,
+      onboardingCompleted: userData?.onboardingCompleted,
+    });
+    if (__DEV__) {
+      onboardingLog('useUserHealthProfile: complete =', complete, {
+        profileCompleted: userData?.profileCompleted,
+        onboardingCompleted: userData?.onboardingCompleted,
+      });
+    }
+  }, [complete, profileResolved, userData?.id, userData?.profileCompleted, userData?.onboardingCompleted]);
 
-  const retry = useCallback(() => {
-    setRetryToken((t) => t + 1);
-  }, []);
-
-  return { profile: userDoc, loading, error, complete, retry };
+  return {
+    profile: userData,
+    loading,
+    error,
+    complete,
+    retry,
+    profileResolved,
+    profileExists,
+  };
 }

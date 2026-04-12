@@ -19,6 +19,10 @@ import {
 import { db } from '@/lib/firebase';
 import { parseDateKey, toDateKey } from '@/lib/dateKey';
 import {
+  buildHabitRepeatDocument,
+  deriveFrequencyStateFromHabit,
+} from '@/lib/habitFrequency';
+import {
   getHabitCompletionsByDate,
   upsertHabitCompletion,
   deleteHabitCompletionForDate,
@@ -43,36 +47,22 @@ function stripUndefined(obj) {
   return out;
 }
 
-/** Map wizard repeatRule + repeatDays → Firestore repeat (habitSchedule.js). */
-function mapWizardRepeatToFirestore(repeatRule, repeatDays) {
-  const days = Array.isArray(repeatDays) ? repeatDays : [];
-  switch (repeatRule) {
-    case 'specific_days_week':
-      return {
-        mode: 'weekly',
-        daysOfWeek: days.map((d) => (Number(d) === 7 ? 0 : Number(d))).filter((n) => n >= 0 && n <= 6),
-        daysOfMonth: null,
-        interval: null,
-      };
-    case 'specific_days_month':
-      return {
-        mode: 'monthly',
-        daysOfWeek: null,
-        daysOfMonth: days.length ? days.map(Number).filter((n) => n >= 1 && n <= 31) : null,
-        interval: null,
-      };
-    case 'specific_days_year':
-      return { mode: 'yearly', daysOfWeek: null, daysOfMonth: null, interval: null };
-    case 'some_days_period':
-      return {
-        mode: 'custom',
-        daysOfWeek: null,
-        daysOfMonth: null,
-        interval: days.length ? Math.max(1, Number(days[0]) || 2) : 2,
-      };
-    default:
-      return { mode: 'daily', daysOfWeek: null, daysOfMonth: null, interval: null };
-  }
+function applyFrequencyToPayload(payload, data) {
+  const built = buildHabitRepeatDocument({
+    repeatRule: data.repeatRule,
+    repeatDays: data.repeatDays,
+    yearlyDates: data.yearlyDates,
+    cadenceCount: data.cadenceCount,
+    cadenceUnit: data.cadenceUnit,
+    intervalEvery: data.intervalEvery,
+  });
+  payload.repeat = built.repeat;
+  payload.repeatRule = built.repeatRule;
+  payload.repeatDays = built.repeatDays;
+  payload.yearlyDates = built.yearlyDates;
+  payload.cadenceCount = built.cadenceCount;
+  payload.cadenceUnit = built.cadenceUnit;
+  payload.intervalEvery = built.intervalEvery;
 }
 
 function computeEndDateKey(startDateKey, endDateEnabled, endDateDays) {
@@ -93,7 +83,6 @@ export async function createHabit(uid, data) {
       ? data.startDate.slice(0, 10)
       : toDateKey(new Date());
 
-  const repeat = mapWizardRepeatToFirestore(data.repeatRule || 'daily', data.repeatDays);
   const endDateKey = computeEndDateKey(
     startDateKey,
     data.endDateEnabled,
@@ -137,6 +126,10 @@ export async function createHabit(uid, data) {
     checklistItems: Array.isArray(data.checklistItems) ? data.checklistItems : null,
     repeatRule: data.repeatRule || 'daily',
     repeatDays: data.repeatDays || [],
+    yearlyDates: Array.isArray(data.yearlyDates) ? data.yearlyDates : [],
+    cadenceCount: data.cadenceCount ?? 1,
+    cadenceUnit: data.cadenceUnit || 'week',
+    intervalEvery: data.intervalEvery ?? 2,
     reminderTime: data.reminderTime ?? null,
     reminderCount: data.reminderCount ?? 0,
     reminderEnabled: !!(data.reminderTime || data.reminderEnabled),
@@ -149,7 +142,6 @@ export async function createHabit(uid, data) {
     completed: data.completed ?? false,
     streak: data.streak ?? 0,
     sortOrder: data.sortOrder ?? 0,
-    repeat,
     schedule: {
       startDateKey,
       endDateKey,
@@ -168,6 +160,8 @@ export async function createHabit(uid, data) {
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+
+  applyFrequencyToPayload(payload, data);
 
   const ref = await addDoc(habitsRef(uid), payload);
   return ref.id;
@@ -208,11 +202,34 @@ export async function updateHabit(uid, habitId, changes) {
     updatedAt: serverTimestamp(),
   });
 
-  if (raw.repeatRule != null || raw.repeatDays != null) {
-    patch.repeat = mapWizardRepeatToFirestore(
-      raw.repeatRule || 'daily',
-      Array.isArray(raw.repeatDays) ? raw.repeatDays : [],
-    );
+  const freqTouched =
+    raw.repeatRule != null ||
+    raw.repeatDays != null ||
+    raw.yearlyDates != null ||
+    raw.cadenceCount != null ||
+    raw.cadenceUnit != null ||
+    raw.intervalEvery != null;
+
+  if (freqTouched) {
+    const snapFreq = await getDoc(habitRef(uid, habitId));
+    const curHabit = snapFreq.exists() ? { id: snapFreq.id, ...snapFreq.data() } : {};
+    const base = deriveFrequencyStateFromHabit(curHabit);
+    const merged = {
+      repeatRule: raw.repeatRule ?? base.repeatRule,
+      repeatDays: raw.repeatDays !== undefined ? raw.repeatDays : base.repeatDays,
+      yearlyDates: raw.yearlyDates !== undefined ? raw.yearlyDates : base.yearlyDates,
+      cadenceCount: raw.cadenceCount !== undefined ? raw.cadenceCount : base.cadenceCount,
+      cadenceUnit: raw.cadenceUnit !== undefined ? raw.cadenceUnit : base.cadenceUnit,
+      intervalEvery: raw.intervalEvery !== undefined ? raw.intervalEvery : base.intervalEvery,
+    };
+    const built = buildHabitRepeatDocument(merged);
+    patch.repeat = built.repeat;
+    patch.repeatRule = built.repeatRule;
+    patch.repeatDays = built.repeatDays;
+    patch.yearlyDates = built.yearlyDates;
+    patch.cadenceCount = built.cadenceCount;
+    patch.cadenceUnit = built.cadenceUnit;
+    patch.intervalEvery = built.intervalEvery;
   }
 
   const hasStart =

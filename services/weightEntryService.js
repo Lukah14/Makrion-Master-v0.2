@@ -22,6 +22,10 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
+function userRootRef(uid) {
+  return doc(db, 'users', uid);
+}
+
 function entriesRef(uid) {
   return collection(db, 'profiles', uid, 'weight_entries');
 }
@@ -44,6 +48,24 @@ async function syncProfileLatestWeightKg(uid) {
     });
   } catch {
     /* profile doc may be missing */
+  }
+}
+
+/** Keep Dashboard / useUser in sync with latest logged weight (users/{uid} mirrors). */
+async function mirrorLatestWeightToUserRoot(uid) {
+  try {
+    const latest = await getLatestWeightEntry(uid);
+    const w = latest?.weightKg;
+    if (w == null || !Number.isFinite(Number(w))) return;
+    const nk = Math.round(Number(w) * 1000) / 1000;
+    await updateDoc(userRootRef(uid), {
+      'profile.currentWeight': nk,
+      'profile.weight': nk,
+      'goals.currentWeight': nk,
+      updatedAt: serverTimestamp(),
+    });
+  } catch {
+    /* users doc may not exist yet */
   }
 }
 
@@ -146,6 +168,7 @@ export async function upsertWeightEntry(uid, data) {
   }
 
   await syncProfileLatestWeightKg(uid);
+  await mirrorLatestWeightToUserRoot(uid);
   return ref.id;
 }
 
@@ -166,6 +189,7 @@ export async function deleteWeightEntryForDate(uid, dateKey) {
     await deleteDoc(ref);
   }
   await syncProfileLatestWeightKg(uid);
+  await mirrorLatestWeightToUserRoot(uid);
 }
 
 /**

@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
   Text,
@@ -7,12 +8,15 @@ import {
   ScrollView,
   ActivityIndicator,
   Platform,
+  InteractionManager,
+  BackHandler,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ChevronLeft } from 'lucide-react-native';
-import { router } from 'expo-router';
+import { router, usePathname } from 'expo-router';
 import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/context/AuthContext';
+import { signOutUser } from '@/services/authService';
 import VerticalWheelPicker from '@/components/onboarding/VerticalWheelPicker';
 import ProgressRing from '@/components/common/ProgressRing';
 import {
@@ -28,12 +32,17 @@ import {
   ftInToCm,
   cmToFtIn,
 } from '@/lib/healthProfile';
+import { computeFullHealthSync } from '@/lib/goalNutritionSync';
+import { parseDateKey } from '@/lib/dateKey';
 import { saveCompleteHealthProfile } from '@/services/userHealthProfileService';
 import { useOnboardingNav } from '@/context/OnboardingNavContext';
-import { onboardingLog } from '@/lib/onboardingDebug';
+import { onboardingLog, onboardingFlowLog } from '@/lib/onboardingDebug';
+import { flowLog } from '@/lib/flowLog';
 import { auth } from '@/lib/firebase';
 
 const DASHBOARD_HREF = '/(tabs)';
+/** Same href as NavigationGate — keep in sync with `app/_layout.jsx`. */
+const LOGIN_HREF = '/(auth)/login';
 
 const STEPS = 8;
 
@@ -46,6 +55,67 @@ const useScrollForStep = (s) => s === 0 || s === 1 || s === 6 || s === STEPS - 1
 
 const rangeArr = (min, max) =>
   Array.from({ length: max - min + 1 }, (_, i) => min + i);
+
+/** Single canonical shape for nutrition + timeline (matches save → users/{uid}/profile/main). */
+function buildCanonicalHealthInput({
+  mainGoal,
+  sex,
+  age,
+  heightCm,
+  currentWeightKg,
+  targetWeightKg,
+  activityLevel,
+  proteinG,
+  carbsG,
+  fatG,
+  dailyCaloriesTarget,
+}) {
+  return {
+    mainGoal,
+    sex,
+    age: Number(age),
+    heightCm: Number(heightCm),
+    currentWeightKg: Number(currentWeightKg),
+    targetWeightKg: Number(targetWeightKg),
+    activityLevel,
+    proteinGoalG: Math.round(Number(proteinG)),
+    carbsGoalG: Math.round(Number(carbsG)),
+    fatGoalG: Math.round(Number(fatG)),
+    dailyCaloriesTarget: Math.round(Number(dailyCaloriesTarget)),
+  };
+}
+
+function formatGoalDateEnUS(dateKey) {
+  if (!dateKey || typeof dateKey !== 'string') return null;
+  try {
+    const d = parseDateKey(dateKey);
+    return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  } catch {
+    return null;
+  }
+}
+
+function formatWeeklyPaceLabel(expectedWeeklyChangeKg, deltaKg) {
+  if (Math.abs(deltaKg) < 0.05) return 'On track for maintenance';
+  const sw = expectedWeeklyChangeKg;
+  if (sw == null || !Number.isFinite(sw)) return 'Adjust calories to refine pace';
+  const v = Math.abs(sw);
+  if (v < 0.02) return 'Near energy balance';
+  if (sw < 0) return `Lose ${v.toFixed(2)} kg/wk`;
+  return `Gain ${v.toFixed(2)} kg/wk`;
+}
+
+/** Slower timeline ≈ higher calories; faster ≈ lower (lose) or adjust surplus (gain). */
+function calorieNudgeForTimeline(mainGoal, direction /* 'faster' | 'slower' */) {
+  const slower = direction === 'slower';
+  if (mainGoal === MAIN_GOAL.LOSE_WEIGHT) {
+    return slower ? 50 : -50;
+  }
+  if (mainGoal === MAIN_GOAL.BUILD_MUSCLE) {
+    return slower ? -40 : 40;
+  }
+  return slower ? 30 : -30;
+}
 
 const AGE_VALUES = rangeArr(14, 100);
 const HEIGHT_CM_VALUES = rangeArr(120, 220);
@@ -143,11 +213,15 @@ const toggleStyles = (Colors) =>
 export default function OnboardingWizard() {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
+  const pathname = usePathname();
   const { user } = useAuth();
   const { notifyProfileSaved, gateRevision } = useOnboardingNav();
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
+  const [leavingToLogin, setLeavingToLogin] = useState(false);
+  /** True after step-0 back requests sign-out; drives stuck-route fallback if gate does not replace. */
+  const expectLogoutNavRef = useRef(false);
 
   const [mainGoal, setMainGoal] = useState(MAIN_GOAL.LOSE_WEIGHT);
   const [sex, setSex] = useState(SEX.MALE);
@@ -206,8 +280,28 @@ export default function OnboardingWizard() {
   const planSeed = useMemo(() => {
     const m = macrosFromCaloriesAndGoal(plan.kcal, mainGoal, currentWeightKg);
     const totalKg = Math.abs(currentWeightKg - targetWeightKg);
-    const wks =
-      totalKg < 0.05 ? 12 : Math.min(WEEKS_MAX, Math.max(WEEKS_MIN, Math.round(totalKg / 0.5)));
+    const canonical = buildCanonicalHealthInput({
+      mainGoal,
+      sex,
+      age,
+      heightCm,
+      currentWeightKg,
+      targetWeightKg,
+      activityLevel,
+      proteinG: m.proteinG,
+      carbsG: m.carbsG,
+      fatG: m.fatG,
+      dailyCaloriesTarget: plan.kcal,
+    });
+    const s = computeFullHealthSync(canonical, 'recommend');
+    let wks =
+      s.goalTimelineWeeks != null
+        ? Math.min(WEEKS_MAX, Math.max(WEEKS_MIN, s.goalTimelineWeeks))
+        : null;
+    if (wks == null) {
+      wks =
+        totalKg < 0.05 ? 12 : Math.min(WEEKS_MAX, Math.max(WEEKS_MIN, Math.round(totalKg / 0.5)));
+    }
     return {
       proteinG: m.proteinG,
       carbsG: m.carbsG,
@@ -216,7 +310,17 @@ export default function OnboardingWizard() {
       aiKcal: plan.kcal,
       tdee: plan.tdee,
     };
-  }, [plan.kcal, plan.tdee, mainGoal, currentWeightKg, targetWeightKg]);
+  }, [
+    plan.kcal,
+    plan.tdee,
+    mainGoal,
+    sex,
+    age,
+    heightCm,
+    currentWeightKg,
+    targetWeightKg,
+    activityLevel,
+  ]);
 
   const [summaryOverride, setSummaryOverride] = useState(null);
   const lastStepRef = useRef(step);
@@ -230,6 +334,40 @@ export default function OnboardingWizard() {
 
   const draft = summaryOverride ?? planSeed;
   const macroKcal = kcalFromMacros(draft.proteinG, draft.carbsG, draft.fatG);
+
+  /** Same pipeline as Firestore save — timeline + pace always track calories, macros, and biometrics. */
+  const summarySync = useMemo(
+    () =>
+      computeFullHealthSync(
+        buildCanonicalHealthInput({
+          mainGoal,
+          sex,
+          age,
+          heightCm,
+          currentWeightKg,
+          targetWeightKg,
+          activityLevel,
+          proteinG: draft.proteinG,
+          carbsG: draft.carbsG,
+          fatG: draft.fatG,
+          dailyCaloriesTarget: macroKcal,
+        }),
+        'recommend',
+      ),
+    [
+      mainGoal,
+      sex,
+      age,
+      heightCm,
+      currentWeightKg,
+      targetWeightKg,
+      activityLevel,
+      draft.proteinG,
+      draft.carbsG,
+      draft.fatG,
+      macroKcal,
+    ],
+  );
 
   const updateDraft = useCallback(
     (fn) => {
@@ -253,26 +391,131 @@ export default function OnboardingWizard() {
   );
 
   const goNext = () => setStep((s) => Math.min(STEPS - 1, s + 1));
-  const goBack = () => setStep((s) => Math.max(0, s - 1));
+
+  /** Step &gt; 0: previous step. Step 0: sign out — NavigationGate replaces to login (avoids duplicate replace + Firestore watch races). */
+  const handleBack = useCallback(async () => {
+    if (saving || leavingToLogin) return;
+    if (step > 0) {
+      setStep((s) => Math.max(0, s - 1));
+      return;
+    }
+    setLeavingToLogin(true);
+    expectLogoutNavRef.current = true;
+    onboardingFlowLog('onboarding: back — sign out (gate → login)');
+    onboardingLog('onboarding: leaving for login screen');
+    try {
+      await new Promise((resolve) => {
+        InteractionManager.runAfterInteractions(() => resolve());
+      });
+      await signOutUser();
+    } catch (e) {
+      expectLogoutNavRef.current = false;
+      onboardingLog('signOut failed (back to login)', e?.message || e);
+      setLeavingToLogin(false);
+      try {
+        router.replace(LOGIN_HREF);
+      } catch (navErr) {
+        onboardingLog('replace login after signOut failure', navErr?.message || navErr);
+      }
+    }
+  }, [step, saving, leavingToLogin]);
+
+  useEffect(() => {
+    if (!leavingToLogin) return;
+    const path = typeof pathname === 'string' ? pathname : '';
+    const onLoginRoute =
+      /(^|\/)login$/.test(path) || (path.includes('(auth)') && path.includes('login'));
+    if (onLoginRoute) setLeavingToLogin(false);
+  }, [leavingToLogin, pathname]);
+
+  /**
+   * After sign-out, NavigationGate should replace to LOGIN_HREF. If the URL is still onboarding,
+   * replace once (avoids competing with gate on the same tick as signOut).
+   */
+  useEffect(() => {
+    if (!expectLogoutNavRef.current || user) return undefined;
+    const path = typeof pathname === 'string' ? pathname : '';
+    if (path.includes('login')) {
+      expectLogoutNavRef.current = false;
+      return undefined;
+    }
+    const t = setTimeout(() => {
+      expectLogoutNavRef.current = false;
+      try {
+        router.replace(LOGIN_HREF);
+      } catch (err) {
+        onboardingLog('onboarding: signed-out stuck fallback', err?.message || err);
+      }
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [user, pathname]);
+
+  useFocusEffect(
+    useCallback(() => {
+      flowLog('ONBOARDING_SCREEN_OPENED');
+      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+        if (saving || leavingToLogin) return true;
+        void handleBack();
+        return true;
+      });
+      return () => sub.remove();
+    }, [handleBack, saving, leavingToLogin]),
+  );
 
   const finish = async () => {
+    onboardingFlowLog('submit started: finish()');
     if (!user?.uid || saving) {
+      onboardingFlowLog('submit aborted: no uid or already saving', {
+        hasUid: !!user?.uid,
+        saving,
+      });
       onboardingLog('Save & continue ignored', { hasUid: !!user?.uid, saving });
       return;
     }
+    if (!auth.currentUser?.uid) {
+      const msg = 'Not signed in. Please sign in and try again.';
+      onboardingFlowLog('submit aborted: auth.currentUser missing');
+      setSaveError(msg);
+      return;
+    }
+    if (auth.currentUser.uid !== user.uid) {
+      onboardingFlowLog('submit aborted: uid mismatch', {
+        authUid: auth.currentUser.uid,
+        contextUid: user.uid,
+      });
+      setSaveError('Session mismatch. Please sign out and sign in again.');
+      return;
+    }
+
     setSaveError('');
+    flowLog('LOADING_SET_TRUE', { scope: 'onboarding_save_button' });
     setSaving(true);
-    onboardingLog('Save & continue pressed → save start', {
-      contextUid: user.uid,
+    onboardingFlowLog('auth ok, write starting', { uid: user.uid });
+    onboardingLog('A) Save & continue pressed — submit start', {
+      uid: user.uid,
       authUid: auth.currentUser?.uid,
       gateRevisionBefore: gateRevision,
     });
-    if (auth.currentUser?.uid && auth.currentUser.uid !== user.uid) {
-      setSaveError('Session mismatch. Please sign out and sign in again.');
-      setSaving(false);
-      return;
-    }
+
     try {
+      flowLog('PROFILE_SAVE_START', { uid: user.uid });
+      onboardingFlowLog('Firestore write: saveCompleteHealthProfile');
+      onboardingLog('B) Firestore write: saveCompleteHealthProfile (users/{uid} + profile/main)');
+      const saveKcal = kcalFromMacros(draft.proteinG, draft.carbsG, draft.fatG);
+      const saveCanonical = buildCanonicalHealthInput({
+        mainGoal,
+        sex,
+        age,
+        heightCm,
+        currentWeightKg,
+        targetWeightKg,
+        activityLevel,
+        proteinG: draft.proteinG,
+        carbsG: draft.carbsG,
+        fatG: draft.fatG,
+        dailyCaloriesTarget: saveKcal,
+      });
+      const saveSync = computeFullHealthSync(saveCanonical, 'recommend');
       await saveCompleteHealthProfile(user.uid, {
         mainGoal,
         sex,
@@ -284,34 +527,55 @@ export default function OnboardingWizard() {
         proteinGoalG: draft.proteinG,
         carbsGoalG: draft.carbsG,
         fatGoalG: draft.fatG,
-        dailyCaloriesTarget: macroKcal,
-        goalTimelineWeeks: draft.weeks,
+        dailyCaloriesTarget: saveKcal,
+        goalTimelineWeeks: saveSync.goalTimelineWeeks ?? draft.weeks,
+        preferencesUnits: heightUnit === 'ft' || weightUnit === 'lbs' ? 'imperial' : 'metric',
       });
-      onboardingLog('Firebase save finished OK');
-      notifyProfileSaved();
-      onboardingLog('notifyProfileSaved; navigating →', DASHBOARD_HREF, {
-        isProfileCompleteFirestore: true,
-        userDocFlags: { profileCompleted: true, onboardingCompleted: true },
-      });
-      await new Promise((resolve) => {
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            try {
-              router.replace(DASHBOARD_HREF);
-              onboardingLog('navigation: router.replace → Dashboard', DASHBOARD_HREF);
-            } catch (navErr) {
-              onboardingLog('router.replace threw', navErr?.message || navErr);
-              setSaveError(navErr?.message || 'Could not open the app home screen.');
-            }
-            resolve();
-          });
-        });
-      });
+      onboardingFlowLog('Firestore write succeeded');
+      onboardingLog('C) Firestore write succeeded — profileCompleted / onboarding flags written');
     } catch (e) {
       const msg = e?.message || String(e);
-      onboardingLog('save or nav failed', msg, e?.code);
+      flowLog('PROFILE_SAVE_FAILED', { uid: user.uid, code: e?.code, message: msg });
+      onboardingFlowLog('WRITE FAILED (staying on onboarding)', e?.code, msg);
+      onboardingLog('WRITE FAILED (do not navigate)', msg, e?.code);
       setSaveError(msg || 'Could not save your profile.');
+      flowLog('LOADING_SET_FALSE', { scope: 'onboarding_save_button', reason: 'save_error' });
+      setSaving(false);
+      return;
+    }
+
+    try {
+      onboardingFlowLog('completion flag set locally: notifyProfileSaved()');
+      onboardingLog('D) Local complete: notifyProfileSaved (no Firestore read required)');
+      notifyProfileSaved();
+
+      onboardingFlowLog('navigating to dashboard (backup router.replace after microtask)');
+      onboardingLog(
+        'E) Navigate to dashboard — gate + router.replace; listener may lag',
+      );
+      await new Promise((resolve) => {
+        setTimeout(() => {
+          try {
+            flowLog('NAVIGATE_DASHBOARD', { from: 'OnboardingWizard', href: DASHBOARD_HREF });
+            router.replace(DASHBOARD_HREF);
+            onboardingFlowLog('router.replace executed →', DASHBOARD_HREF);
+            onboardingLog('F) router.replace →', DASHBOARD_HREF);
+          } catch (navErr) {
+            flowLog('NAVIGATE_DASHBOARD_FAILED', String(navErr?.message || navErr));
+            onboardingFlowLog('NAV FAILED (write already OK)', navErr?.message || navErr);
+            onboardingLog('NAV FAILED (write already OK)', navErr?.message || navErr);
+            setSaveError(navErr?.message || 'Could not open the app home screen.');
+          }
+          resolve();
+        }, 0);
+      });
+    } catch (e) {
+      flowLog('POST_SAVE_UNEXPECTED', String(e?.message || e));
+      onboardingFlowLog('post-write unexpected', e?.message || e);
+      onboardingLog('post-write unexpected', e?.message || e);
+      setSaveError(e?.message || 'Could not continue.');
     } finally {
+      flowLog('LOADING_SET_FALSE', { scope: 'onboarding_save_button', reason: 'finish_finally' });
       setSaving(false);
     }
   };
@@ -489,25 +753,18 @@ export default function OnboardingWizard() {
     const cK = draft.carbsG * 4;
     const fK = draft.fatG * 9;
     const deltaKg = currentWeightKg - targetWeightKg;
-    const kgPerWeek = draft.weeks > 0 ? Math.abs(deltaKg) / draft.weeks : 0;
-    const goalEnd = new Date();
-    goalEnd.setDate(goalEnd.getDate() + draft.weeks * 7);
-    const goalMonth = goalEnd.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-    const paceLabel =
-      Math.abs(deltaKg) < 0.05
-        ? 'On track for maintenance'
-        : mainGoal === MAIN_GOAL.LOSE_WEIGHT && deltaKg > 0
-          ? `Lose ${kgPerWeek.toFixed(2)} kg/wk`
-          : mainGoal === MAIN_GOAL.BUILD_MUSCLE && deltaKg < 0
-            ? `Gain ${kgPerWeek.toFixed(2)} kg/wk`
-            : deltaKg > 0
-              ? `Lose ${kgPerWeek.toFixed(2)} kg/wk`
-              : `Gain ${kgPerWeek.toFixed(2)} kg/wk`;
-    const aiMacros = macrosFromCaloriesAndGoal(draft.aiKcal, mainGoal, currentWeightKg);
+    const rawWeeks = summarySync.goalTimelineWeeks;
+    const displayWeeks =
+      rawWeeks != null ? Math.min(WEEKS_MAX, Math.max(WEEKS_MIN, rawWeeks)) : null;
+    const goalMonth =
+      formatGoalDateEnUS(summarySync.estimatedGoalDate) ??
+      '—';
+    const paceLabel = formatWeeklyPaceLabel(summarySync.expectedWeeklyChangeKg, deltaKg);
+    const splitAtKcal = macrosFromCaloriesAndGoal(macroKcal, mainGoal, currentWeightKg);
     const synced =
-      draft.proteinG === aiMacros.proteinG &&
-      draft.carbsG === aiMacros.carbsG &&
-      draft.fatG === aiMacros.fatG;
+      Math.abs(draft.proteinG - splitAtKcal.proteinG) <= 1 &&
+      Math.abs(draft.carbsG - splitAtKcal.carbsG) <= 1 &&
+      Math.abs(draft.fatG - splitAtKcal.fatG) <= 1;
 
     body = (
       <>
@@ -536,7 +793,7 @@ export default function OnboardingWizard() {
               <Text style={styles.adjSqTxt}>−</Text>
             </TouchableOpacity>
             <ProgressRing radius={44} strokeWidth={8} progress={ringProg} color={Colors.textPrimary}>
-              <Text style={styles.ringKcal}>{macroKcal.toLocaleString()}</Text>
+              <Text style={styles.ringKcal}>{macroKcal.toLocaleString('en-US')}</Text>
             </ProgressRing>
             <TouchableOpacity
               style={styles.adjSq}
@@ -662,7 +919,7 @@ export default function OnboardingWizard() {
             <View style={[styles.macroSeg, { flex: fK, backgroundColor: '#3B82F6' }]} />
           </View>
           <View style={styles.macroFooter}>
-            <Text style={styles.macroTotal}>Total: {macroKcal.toLocaleString()} kcal</Text>
+            <Text style={styles.macroTotal}>Total: {macroKcal.toLocaleString('en-US')} kcal</Text>
             <Text style={[styles.macroSync, { color: synced ? Colors.success : Colors.textTertiary }]}>
               {synced ? '• Synced' : '• Custom'}
             </Text>
@@ -679,29 +936,21 @@ export default function OnboardingWizard() {
           <View style={styles.timelineRow}>
             <TouchableOpacity
               style={styles.adjSqLg}
-              onPress={() =>
-                updateDraft((d) => ({
-                  ...d,
-                  weeks: Math.max(WEEKS_MIN, d.weeks - 1),
-                }))
-              }
+              onPress={() => applyCalorieDelta(calorieNudgeForTimeline(mainGoal, 'faster'))}
               activeOpacity={0.7}
             >
               <Text style={styles.adjSqLgTxt}>−</Text>
             </TouchableOpacity>
             <View style={styles.timelineMid}>
-              <Text style={styles.timelineNum}>{draft.weeks}</Text>
+              <Text style={styles.timelineNum}>
+                {displayWeeks != null ? String(displayWeeks) : '—'}
+              </Text>
               <Text style={styles.timelineUnit}>weeks</Text>
-              <Text style={styles.timelineHint}>Balanced</Text>
+              <Text style={styles.timelineHint}>From TDEE and calories</Text>
             </View>
             <TouchableOpacity
               style={styles.adjSqLg}
-              onPress={() =>
-                updateDraft((d) => ({
-                  ...d,
-                  weeks: Math.min(WEEKS_MAX, d.weeks + 1),
-                }))
-              }
+              onPress={() => applyCalorieDelta(calorieNudgeForTimeline(mainGoal, 'slower'))}
               activeOpacity={0.7}
             >
               <Text style={styles.adjSqLgTxt}>+</Text>
@@ -711,11 +960,19 @@ export default function OnboardingWizard() {
             <Text style={styles.timelineIco}>↘</Text>
             <View style={{ flex: 1 }}>
               <Text style={styles.timelinePace}>{paceLabel}</Text>
-              <Text style={styles.timelineSub}>Goal reached by {goalMonth}</Text>
+              <Text style={styles.timelineSub}>
+                {summarySync.estimatedGoalDate
+                  ? `Goal reached by ${goalMonth}`
+                  : 'Adjust your calorie target to see an estimated date'}
+              </Text>
             </View>
             <View style={styles.timelineRight}>
-              <Text style={styles.timelineRightTop}>{draft.weeks}w</Text>
-              <Text style={styles.timelineRightSub}>{goalMonth.split(' ')[0]}</Text>
+              <Text style={styles.timelineRightTop}>
+                {displayWeeks != null ? `${displayWeeks}w` : '—'}
+              </Text>
+              <Text style={styles.timelineRightSub}>
+                {goalMonth !== '—' ? goalMonth.split(' ')[0] : '—'}
+              </Text>
             </View>
           </View>
         </View>
@@ -728,13 +985,20 @@ export default function OnboardingWizard() {
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       <View style={styles.topBar}>
-        {step > 0 ? (
-          <TouchableOpacity onPress={goBack} style={styles.backBtn} hitSlop={12}>
+        <TouchableOpacity
+          onPress={() => void handleBack()}
+          style={[styles.backBtn, (saving || leavingToLogin) && styles.backBtnDisabled]}
+          hitSlop={12}
+          disabled={saving || leavingToLogin}
+          accessibilityRole="button"
+          accessibilityLabel={step > 0 ? 'Back' : 'Back to sign in'}
+        >
+          {leavingToLogin ? (
+            <ActivityIndicator size="small" color={Colors.textPrimary} />
+          ) : (
             <ChevronLeft size={26} color={Colors.textPrimary} />
-          </TouchableOpacity>
-        ) : (
-          <View style={styles.backPlaceholder} />
-        )}
+          )}
+        </TouchableOpacity>
         <Text style={styles.stepInd}>
           {step + 1} / {STEPS}
         </Text>
@@ -763,19 +1027,25 @@ export default function OnboardingWizard() {
           </TouchableOpacity>
         ) : (
           <TouchableOpacity
-            style={[styles.primaryBtn, saving && styles.primaryBtnDis]}
+            style={[styles.primaryBtn, saving && styles.primaryBtnSaving]}
             onPress={() => {
+              flowLog('SAVE_AND_CONTINUE_PRESSED', 'button');
+              onboardingFlowLog('button pressed: Save & continue');
               onboardingLog('Save & continue button onPress');
               void finish();
             }}
             disabled={saving}
             activeOpacity={0.85}
           >
-            {saving ? (
-              <ActivityIndicator color={Colors.onPrimary} />
-            ) : (
-              <Text style={styles.primaryBtnText}>Save & continue</Text>
-            )}
+            <View style={styles.primaryBtnInner}>
+              {saving ? (
+                <ActivityIndicator
+                  color={Colors.onPrimary}
+                  style={styles.primaryBtnSpinner}
+                />
+              ) : null}
+              <Text style={styles.primaryBtnText}>{'Save & Continue'}</Text>
+            </View>
           </TouchableOpacity>
         )}
       </View>
@@ -793,7 +1063,8 @@ const createStyles = (Colors) =>
       paddingHorizontal: 8,
       paddingBottom: 8,
     },
-    backBtn: { padding: 8 },
+    backBtn: { padding: 8, minWidth: 42, alignItems: 'center', justifyContent: 'center' },
+    backBtnDisabled: { opacity: 0.45 },
     backPlaceholder: { width: 42 },
     stepInd: {
       fontSize: 13,
@@ -1167,8 +1438,8 @@ const createStyles = (Colors) =>
     },
     footer: {
       paddingHorizontal: 22,
-      paddingBottom: Platform.OS === 'ios' ? 8 : 16,
-      paddingTop: 8,
+      paddingBottom: Platform.OS === 'ios' ? 20 : 20,
+      paddingTop: 12,
       borderTopWidth: 1,
       borderTopColor: Colors.border,
     },
@@ -1176,9 +1447,23 @@ const createStyles = (Colors) =>
       backgroundColor: Colors.textPrimary,
       borderRadius: 16,
       paddingVertical: 16,
+      paddingHorizontal: 20,
       alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: 56,
     },
-    primaryBtnDis: { opacity: 0.6 },
+    /** Do not dim the whole button (opacity hid label + looked “broken” with spinner-only). */
+    primaryBtnSaving: {
+      opacity: 1,
+      borderWidth: 2,
+      borderColor: Colors.onPrimary + '55',
+    },
+    primaryBtnInner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    primaryBtnSpinner: { marginRight: 10 },
     primaryBtnText: {
       fontSize: 17,
       fontFamily: 'PlusJakartaSans-Bold',

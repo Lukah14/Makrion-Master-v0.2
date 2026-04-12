@@ -8,8 +8,9 @@ const ICON_CALORIES = require('@/src/Icons/Calories.png');
 export default function CalorieRing({ consumed, target, burned }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
-  const remaining = target - consumed + burned;
-  const progress = consumed / target;
+  const safeTarget = Math.max(0, Number(target) || 0);
+  const remaining = safeTarget - consumed + burned;
+  const progress = safeTarget > 0 ? Math.min(consumed / safeTarget, 1) : 0;
 
   return (
     <Card>
@@ -31,7 +32,7 @@ export default function CalorieRing({ consumed, target, burned }) {
 
       <View style={styles.statsRow}>
         <View style={styles.statItem}>
-          <Text style={styles.statValue}>{target.toLocaleString()}</Text>
+          <Text style={styles.statValue}>{safeTarget.toLocaleString()}</Text>
           <Text style={styles.statLabel}>Goal</Text>
         </View>
         <View style={styles.statItem}>
