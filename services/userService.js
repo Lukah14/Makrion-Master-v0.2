@@ -178,6 +178,79 @@ export async function ensureUserDocument(firebaseUser) {
   }
 }
 
+/**
+ * Ensure users/{uid} exists for a Google-authenticated user.
+ * - New user: creates full document with `provider: 'google'`.
+ * - Existing user: safely merges `displayName`, `photoURL`, `updatedAt` without
+ *   overwriting onboarding progress, goals, or other user data.
+ */
+export async function ensureGoogleUserDocument(firebaseUser) {
+  if (!firebaseUser?.uid) return;
+  const ref = userRef(firebaseUser.uid);
+  const r = await readDocResilient(ref);
+
+  if (!r.exists) {
+    await setDoc(ref, {
+      uid: firebaseUser.uid,
+      email: firebaseUser.email || null,
+      displayName: firebaseUser.displayName || '',
+      photoURL: firebaseUser.photoURL || '',
+      provider: 'google',
+      role: 'user',
+      onboardingCompleted: false,
+      profileCompleted: false,
+      isProfileComplete: false,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      profile: {
+        sex: '',
+        dateOfBirth: '',
+        height: null,
+        weight: null,
+        currentWeight: null,
+        activityLevel: '',
+      },
+      goals: {
+        calories: null,
+        protein: null,
+        carbs: null,
+        fat: null,
+        water: null,
+        targetWeight: null,
+        stepsGoal: 10000,
+      },
+      settings: {
+        darkMode: false,
+        language: 'en',
+      },
+      stats: {
+        streak: 0,
+      },
+      preferences: {
+        units: 'metric',
+        appearance: 'light',
+      },
+    });
+    console.log('[FIRESTORE_PROFILE_CREATED]', firebaseUser.uid);
+  } else {
+    const existing = r.data() || {};
+    const updates = { updatedAt: serverTimestamp() };
+
+    if (firebaseUser.displayName && firebaseUser.displayName !== existing.displayName) {
+      updates.displayName = firebaseUser.displayName;
+    }
+    if (firebaseUser.photoURL && firebaseUser.photoURL !== existing.photoURL) {
+      updates.photoURL = firebaseUser.photoURL;
+    }
+    if (!existing.provider) {
+      updates.provider = 'google';
+    }
+
+    await updateDoc(ref, updates);
+    console.log('[FIRESTORE_PROFILE_UPDATED]', firebaseUser.uid);
+  }
+}
+
 export async function updateUserProfile(uid, profileData) {
   await ensureUserRootShell(uid);
   await updateDoc(userRef(uid), {

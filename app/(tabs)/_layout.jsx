@@ -3,11 +3,12 @@ import { View, Image, StyleSheet, Platform } from 'react-native';
 import { House } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import { NutritionDateProvider } from '@/context/NutritionDateContext';
+import { DomainStreaksProvider } from '@/context/DomainStreaksContext';
 
-const NAV_NUTRITION = require('@/src/Nav Icons/Nutrition.png');
-const NAV_ACTIVITY = require('@/src/Nav Icons/Activity.png');
-const NAV_HABIT_TRACKER = require('@/src/Nav Icons/HabitTracker.png');
-const NAV_PROGRESS = require('@/src/Nav Icons/Progress.png');
+const NAV_NUTRITION = require('@/src/NavIcons/Nutrition.png');
+const NAV_ACTIVITY = require('@/src/NavIcons/Activity.png');
+const NAV_HABIT_TRACKER = require('@/src/NavIcons/HabitTracker.png');
+const NAV_PROGRESS = require('@/src/NavIcons/Progress.png');
 
 function NavIcon({ source, color, size }) {
   return (
@@ -24,6 +25,7 @@ export default function TabLayout() {
 
   return (
     <NutritionDateProvider>
+    <DomainStreaksProvider>
     <Tabs
       initialRouteName="index"
       screenOptions={{
@@ -104,6 +106,7 @@ export default function TabLayout() {
         }}
       />
     </Tabs>
+    </DomainStreaksProvider>
     </NutritionDateProvider>
   );
 }

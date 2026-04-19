@@ -13,6 +13,7 @@ import {
   deleteDoc,
   query,
   where,
+  orderBy,
   serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
@@ -24,6 +25,30 @@ function momentsRef(uid) {
 
 function momentRef(uid, dateKey) {
   return doc(db, 'profiles', uid, 'memorable_moments', dateKey);
+}
+
+/**
+ * All memorable moment dateKey values in [startKey, endKey] (inclusive).
+ * @param {string} uid
+ * @param {string} startKey YYYY-MM-DD
+ * @param {string} endKey YYYY-MM-DD
+ * @returns {Promise<Set<string>>}
+ */
+export async function fetchMemorableMomentDateKeys(uid, startKey, endKey) {
+  if (!uid || !startKey || !endKey || startKey > endKey) return new Set();
+  const q = query(
+    momentsRef(uid),
+    where('dateKey', '>=', startKey),
+    where('dateKey', '<=', endKey),
+    orderBy('dateKey', 'asc'),
+  );
+  const snap = await getDocs(q);
+  const set = new Set();
+  snap.docs.forEach((d) => {
+    const k = d.data()?.dateKey;
+    if (k) set.add(String(k));
+  });
+  return set;
 }
 
 function tsMillis(ts) {

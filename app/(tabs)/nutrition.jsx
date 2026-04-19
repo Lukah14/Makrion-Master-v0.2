@@ -15,9 +15,9 @@ import SelectedDateBar from '@/components/calendar/SelectedDateBar';
 import RecipesView from '@/components/recipes/RecipesView';
 import { useFoodLog } from '@/hooks/useFoodLog';
 import { useUser } from '@/hooks/useUser';
-import { isNutritionStrikeComplete, countStreak } from '@/lib/strikeHelpers';
 import { todayDateKey } from '@/lib/dateKey';
 import { num } from '@/lib/num';
+import { useDomainStreaksContext } from '@/context/DomainStreaksContext';
 
 function NutritionHeader({ logSummary, goals }) {
   const { colors: Colors } = useTheme();
@@ -110,8 +110,7 @@ export default function NutritionScreen() {
   const goals = resolvedGoals ?? userDoc?.goals ?? {};
   const consumed = num(foodLog.summary?.totalsLogged?.kcal);
   const calTarget = num(goals.calories);
-  const todayComplete = calTarget > 0 && isNutritionStrikeComplete({ consumed, target: calTarget });
-  const strikeCount = calTarget > 0 ? countStreak([todayComplete]) : 0;
+  const { currentStreak } = useDomainStreaksContext();
 
   const handleAddMeal = useCallback((mealType) => {
     setSearchMealType(mealType);
@@ -186,7 +185,7 @@ export default function NutritionScreen() {
           <View style={styles.pageHeader}>
             <Text style={styles.screenTitle}>Nutrition</Text>
             <View style={styles.headerActions}>
-              <StrikeBadge count={strikeCount} color="#34C759" />
+              <StrikeBadge count={currentStreak} color="#34C759" />
             </View>
           </View>
           <SelectedDateBar

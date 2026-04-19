@@ -14,7 +14,7 @@ const ICON_MORE = require('@/src/Icons/More.png');
 import { useTheme } from '@/context/ThemeContext';
 import { Layout } from '@/constants/layout';
 import HabitWeekStrip from './HabitWeekStrip';
-import { habitIconMap, getIconForCategory } from './habitIconMap';
+import { HabitCategoryIcon } from './habitIconMap';
 import { formatHabitFrequencyLabel } from '@/lib/habitEditForm';
 
 function getCompletionRate(completionHistory = []) {
@@ -116,10 +116,7 @@ export default function HabitManageCard({
           <Image source={ICON_MORE} style={styles.moreHeaderIcon} resizeMode="contain" />
         </TouchableOpacity>
         <View style={[styles.iconCircle, { backgroundColor: habit.iconBg || '#E8F4FD' }]}>
-          {(() => {
-            const IconComp = (habit.iconName && habitIconMap[habit.iconName]) || getIconForCategory(habit.category);
-            return <IconComp size={20} color={habit.iconColor || Colors.textPrimary} />;
-          })()}
+          <HabitCategoryIcon iconName={habit.iconName} category={habit.category} size={20} />
         </View>
       </View>
 

@@ -11,7 +11,7 @@ import { todayDateKey } from '@/lib/dateKey';
 import ProgressRing from '@/components/common/ProgressRing';
 import StrikeBadge from '@/components/common/StrikeBadge';
 import TodayPage from '@/components/activity/TodayPage';
-import { isActivityStrikeComplete, countStreak } from '@/lib/strikeHelpers';
+import { useDomainStreaksContext } from '@/context/DomainStreaksContext';
 import { useActivityLog } from '@/hooks/useActivityLog';
 import { useSteps } from '@/hooks/useSteps';
 import AddEditActivityModal from '@/components/activity/AddEditActivityModal';
@@ -105,11 +105,12 @@ export default function ActivityScreen() {
         }
         setActivityModalOpen(false);
         setEditingEntryId(null);
+        bumpCalendarRefresh();
       } catch (e) {
         Alert.alert('Could not save', e?.message || 'Try again.');
       }
     },
-    [activityLog, editingEntryId],
+    [activityLog, editingEntryId, bumpCalendarRefresh],
   );
 
   const stepProgressPct = stepsHook.stepProgressPercent;
@@ -122,12 +123,7 @@ export default function ActivityScreen() {
     stepProgress: stepProgressPct,
   };
 
-  const ACTIVITY_BURN_TARGET = 500;
-  const todayComplete = isActivityStrikeComplete({
-    burned: activityData.caloriesBurned,
-    target: ACTIVITY_BURN_TARGET,
-  });
-  const strikeCount = countStreak([todayComplete, true, true, true]);
+  const { currentStreak } = useDomainStreaksContext();
 
   return (
     <SafeAreaView style={s.safeArea} edges={['top']}>
@@ -140,7 +136,7 @@ export default function ActivityScreen() {
         <View style={s.pageHeader}>
           <Text style={s.screenTitle}>Activity</Text>
           <View style={s.headerActions}>
-            <StrikeBadge count={strikeCount} color="#FFD60A" />
+            <StrikeBadge count={currentStreak} color="#FFD60A" />
           </View>
         </View>
 
@@ -194,6 +190,7 @@ export default function ActivityScreen() {
           onDelete={async (id) => {
             try {
               await activityLog.removeEntry(id);
+              bumpCalendarRefresh();
             } catch (e) {
               Alert.alert('Could not delete', e?.message || 'Try again.');
             }

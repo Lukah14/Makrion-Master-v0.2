@@ -1,5 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import 'react-native-gesture-handler';
+import React, { useEffect, useRef, useState } from 'react';
 import '@/lib/firebase';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import BootErrorBoundary from '@/components/common/BootErrorBoundary';
+
+if (__DEV__) {
+  // eslint-disable-next-line no-console
+  console.log('[BOOT:root_layout] loaded (Firebase + Auth modules initialized via firebase.js import)');
+}
 import { Stack, useSegments, useRouter, usePathname, useNavigationContainerRef } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { View, ActivityIndicator, Text, TouchableOpacity, StyleSheet } from 'react-native';
@@ -481,7 +489,7 @@ function NavigationGate({ fontsReady }) {
           </Text>
         </View>
       ) : null}
-      <StatusBar style={isDark ? 'light-content' : 'dark-content'} />
+      <StatusBar style={isDark ? 'light' : 'dark'} />
     </View>
   );
 }
@@ -581,8 +589,12 @@ export default function RootLayout() {
   const fontsReady = fontsLoaded || !!fontError;
 
   return (
-    <ThemeProvider>
-      <RootContent fontsReady={fontsReady} />
-    </ThemeProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <BootErrorBoundary>
+        <ThemeProvider>
+          <RootContent fontsReady={fontsReady} />
+        </ThemeProvider>
+      </BootErrorBoundary>
+    </GestureHandlerRootView>
   );
 }

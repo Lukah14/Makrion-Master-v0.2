@@ -37,3 +37,12 @@ export const FILTER_OPTIONS = {
   source: ['Database', 'My foods', 'Saved foods'],
   sort: ['Relevance', 'Lowest calories /100g', 'Highest protein /100g', 'Best protein/calorie ratio', 'Lowest fat /100g'],
 };
+
+/** Keys for FoodSearchView + FilterSheet; order matches filter state shape. */
+export const FOOD_SEARCH_FILTER_KEYS = [
+  'category', 'calories', 'protein', 'carbs', 'fat', 'diet', 'brand', 'source', 'sort',
+];
+
+export function emptyFoodSearchFilters() {
+  return Object.fromEntries(FOOD_SEARCH_FILTER_KEYS.map((k) => [k, []]));
+}

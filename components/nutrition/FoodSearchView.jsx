@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
   Image, StyleSheet, ActivityIndicator,
@@ -8,14 +8,20 @@ import {
   Sparkles, FileText, SlidersHorizontal, UtensilsCrossed,
 } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
-import { FILTER_OPTIONS } from '@/data/foodDatabase';
+import {
+  FILTER_OPTIONS,
+  FOOD_DATABASE,
+  emptyFoodSearchFilters,
+  FOOD_SEARCH_FILTER_KEYS,
+} from '@/data/foodDatabase';
 import { getCategoryIcon } from '@/components/recipes/foodCategoryIcons';
-import { buildFoodModelFromSearch } from '@/lib/servingUtils';
+import { buildLocalFoodModel } from '@/lib/servingUtils';
+import { fetchFatSecretFoodSearchJson, mapFatSecretProxyFoodsToModels } from '@/lib/foodSearchApi';
+import { useDebounce } from '@/hooks/useDebounce';
 import { useAuth } from '@/context/AuthContext';
 import { useMyFoods } from '@/hooks/useMyFoods';
 import { useSavedFoods } from '@/hooks/useSavedFoods';
 import { todayDateKey } from '@/lib/dateKey';
-import { myFoodToSearchModel } from '@/services/foodService';
 import FilterSheet from './FilterSheet';
 import AddToLogSheet from './AddToLogSheet';
 import FoodDetailScreen from './FoodDetailScreen';
@@ -23,30 +29,88 @@ import CompareFoodsScreen from './CompareFoodsScreen';
 import CreateFoodForm from './CreateFoodForm';
 import ManualAddSheet from './ManualAddSheet';
 
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+const TOP_TABS = ['All', 'My foods', 'Saved foods'];
+const FILTER_KEYS = FOOD_SEARCH_FILTER_KEYS;
+const BROWSE_FILTER_KEYS = ['category', 'calories', 'protein', 'carbs', 'fat', 'diet', 'source', 'sort'];
+const UI_CATEGORY_SET = new Set(FILTER_OPTIONS.category.map((c) => c.toLowerCase()));
 
-async function searchFatSecret(query, page = 0) {
-  const url = `${SUPABASE_URL}/functions/v1/fatsecret-proxy?action=search&q=${encodeURIComponent(query)}&page=${page}&max_results=20`;
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
-  });
-  if (!res.ok) throw new Error('Search failed');
-  return res.json();
+function getPer100gFood(food) {
+  if (food.nutritionPer100g) return food.nutritionPer100g;
+  if (food.per100g) {
+    return {
+      calories: food.per100g.kcal ?? food.per100g.calories ?? 0,
+      protein: food.per100g.protein ?? 0,
+      carbs: food.per100g.carbs ?? food.per100g.carbohydrate ?? 0,
+      fat: food.per100g.fat ?? 0,
+    };
+  }
+  if (food.servings?.length > 0) {
+    const donor = food.servings.find((s) => s.per100g) || food.defaultServing;
+    if (donor?.per100g) {
+      return {
+        calories: donor.per100g.calories ?? 0,
+        protein: donor.per100g.protein ?? 0,
+        carbs: donor.per100g.carbohydrate ?? donor.per100g.carbs ?? 0,
+        fat: donor.per100g.fat ?? 0,
+      };
+    }
+  }
+  return {
+    calories: food.calories || 0,
+    protein: food.protein || 0,
+    carbs: food.carbs || 0,
+    fat: food.fat || 0,
+  };
 }
 
-const TOP_TABS = ['All', 'My foods', 'Saved foods'];
-const FILTER_KEYS = ['category', 'calories', 'protein', 'carbs', 'fat', 'diet', 'brand', 'source', 'sort'];
-const EMPTY_FILTERS = Object.fromEntries(FILTER_KEYS.map((k) => [k, []]));
+function getSugarPer100gFood(food) {
+  const donor = food.servings?.find((s) => s.per100g)?.per100g;
+  if (donor && donor.sugar != null && Number.isFinite(Number(donor.sugar))) return Number(donor.sugar);
+  return null;
+}
 
-function useDebounce(value, delay = 300) {
-  const [debounced, setDebounced] = useState(value);
-  const timer = useRef(null);
-  const update = useCallback((v) => {
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => setDebounced(v), delay);
-  }, [delay]);
-  return [debounced, update];
+/**
+ * Category used only when food already carries a UI category (local DB, some saved rows).
+ * FatSecret `food_type` is usually Generic/Brand — we do not infer from name for filtering,
+ * so those rows are not dropped when a category chip is selected.
+ */
+function explicitUiCategory(food) {
+  const raw = (food.category || '').trim();
+  if (raw && UI_CATEGORY_SET.has(raw.toLowerCase())) return raw;
+  return null;
+}
+
+/**
+ * Diet: only apply reliable rules (per-100g protein, sugar when present).
+ * Name-based Vegetarian/Vegan/Gluten-free is too aggressive for API results — do not exclude.
+ */
+function matchesDietLabel(food, label) {
+  const n = getPer100gFood(food);
+  if (label === 'High-protein') return n.protein >= 20;
+  if (label === 'Low-sugar') {
+    const s = getSugarPer100gFood(food);
+    if (s == null) return true;
+    return s < 5;
+  }
+  if (label === 'Vegetarian' || label === 'Vegan' || label === 'Gluten-free') return true;
+  return true;
+}
+
+function matchesSourceOption(food, opt) {
+  const s = food.source || 'fatsecret';
+  if (opt === 'Database') return s === 'fatsecret' || s === 'local';
+  if (opt === 'My foods') return s === 'user';
+  if (opt === 'Saved foods') return s === 'saved';
+  return true;
+}
+
+function calorieBucketMatches(cf, calories) {
+  if (cf.startsWith('Under 50')) return calories < 50;
+  if (cf.startsWith('Under 100')) return calories < 100;
+  if (cf.includes('100–250') || cf.includes('100-250')) return calories >= 100 && calories <= 250;
+  if (cf.includes('250–500') || cf.includes('250-500')) return calories >= 250 && calories <= 500;
+  if (cf.startsWith('500')) return calories >= 500;
+  return false;
 }
 
 function FoodResultCard({ food, onPress, onAdd }) {
@@ -147,7 +211,7 @@ function SearchEmptyState({ query: q, onAI, onCreate }) {
   return (
     <View style={styles.emptyState}>
       <Text style={styles.emptyIcon}>🔍</Text>
-      <Text style={styles.emptyTitle}>No exact matches found</Text>
+      <Text style={styles.emptyTitle}>No results found</Text>
       <Text style={styles.emptySubtitle}>
         Try a different keyword, brand, or use AI search
       </Text>
@@ -294,15 +358,15 @@ export default function FoodSearchView({
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
 
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const myFoods = useMyFoods();
   const savedFoodsHook = useSavedFoods();
   const savedFoodsList = savedFoodsHook.searchModels;
 
   const [topTab, setTopTab] = useState('All');
   const [query, setQuery] = useState('');
-  const [debouncedQuery, setDebouncedQuery] = useDebounce('');
-  const [filters, setFilters] = useState(EMPTY_FILTERS);
+  const [debouncedQuery, setDebouncedQuery, setDebouncedImmediate] = useDebounce('');
+  const [filters, setFilters] = useState(() => emptyFoodSearchFilters());
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
   const [activeFilterChip, setActiveFilterChip] = useState('calories');
   const [manualAddOpen, setManualAddOpen] = useState(false);
@@ -318,31 +382,65 @@ export default function FoodSearchView({
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const toastTimer = useRef(null);
-  const searchTimer = useRef(null);
+  const prevUidRef = useRef(user?.uid ?? null);
+
+  /** 'loading' | 'authenticated' | 'unauthenticated' — only decide signed-out after Firebase auth finishes. */
+  const authStatus = authLoading ? 'loading' : user?.uid ? 'authenticated' : 'unauthenticated';
 
   useEffect(() => {
-    clearTimeout(searchTimer.current);
+    if (authLoading) return;
+    if (!user?.uid) {
+      setQuery('');
+      setDebouncedImmediate('');
+      setApiResults([]);
+      setSearchError(null);
+      setLoading(false);
+    }
+  }, [user?.uid, authLoading, setDebouncedImmediate]);
+
+  useEffect(() => {
+    const uid = user?.uid ?? null;
+    if (uid && prevUidRef.current !== uid) {
+      setSearchError(null);
+    }
+    prevUidRef.current = uid;
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (authLoading || !user?.uid) {
+      return undefined;
+    }
     if (!debouncedQuery.trim()) {
       setApiResults([]);
       setSearchError(null);
       setLoading(false);
-      return;
+      return undefined;
     }
+    let cancelled = false;
     setLoading(true);
     setSearchError(null);
-    searchTimer.current = setTimeout(async () => {
+    (async () => {
       try {
-        const data = await searchFatSecret(debouncedQuery);
-        setApiResults((data.foods || []).map(buildFoodModelFromSearch));
-      } catch {
-        setSearchError('Could not load results. Please try again.');
-        setApiResults([]);
+        const data = await fetchFatSecretFoodSearchJson(debouncedQuery.trim(), 0, 20);
+        if (cancelled) return;
+        setApiResults(mapFatSecretProxyFoodsToModels(data.foods));
+      } catch (e) {
+        if (!cancelled) {
+          let msg = e?.message || "Couldn't load search results. Please try again.";
+          if (user?.uid && /sign in to search foods/i.test(msg)) {
+            msg = "Couldn't load search results. Please try again.";
+          }
+          setSearchError(msg.length > 400 ? `${msg.slice(0, 397)}…` : msg);
+          setApiResults([]);
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
-    }, 400);
-    return () => clearTimeout(searchTimer.current);
-  }, [debouncedQuery]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedQuery, user?.uid, authLoading]);
 
   const handleQueryChange = (text) => {
     setQuery(text);
@@ -351,7 +449,7 @@ export default function FoodSearchView({
 
   const handleClear = () => {
     setQuery('');
-    setDebouncedQuery('');
+    setDebouncedImmediate('');
     setApiResults([]);
     setSearchError(null);
   };
@@ -504,52 +602,34 @@ export default function FoodSearchView({
     }
   };
 
-  const getPer100g = (food) => {
-    if (food.nutritionPer100g) return food.nutritionPer100g;
-    if (food.per100g) return {
-      calories: food.per100g.kcal ?? food.per100g.calories ?? 0,
-      protein: food.per100g.protein ?? 0,
-      carbs: food.per100g.carbs ?? food.per100g.carbohydrate ?? 0,
-      fat: food.per100g.fat ?? 0,
-    };
-    if (food.servings?.length > 0) {
-      const donor = food.servings.find((s) => s.per100g) || food.defaultServing;
-      if (donor?.per100g) return {
-        calories: donor.per100g.calories ?? 0,
-        protein: donor.per100g.protein ?? 0,
-        carbs: donor.per100g.carbohydrate ?? donor.per100g.carbs ?? 0,
-        fat: donor.per100g.fat ?? 0,
-      };
-    }
-    return { calories: food.calories || 0, protein: food.protein || 0, carbs: food.carbs || 0, fat: food.fat || 0 };
-  };
-
-  const applyClientFilters = (results) => {
+  const applyClientFilters = (results, { skipSourceFilter = false } = {}) => {
     let res = [...results];
+
+    const catFilters = filters.category || [];
+    if (catFilters.length > 0) {
+      res = res.filter((f) => {
+        const ex = explicitUiCategory(f);
+        if (ex == null) return true;
+        return catFilters.some((c) => c.toLowerCase() === ex.toLowerCase());
+      });
+    }
 
     const calFilters = filters.calories || [];
     if (calFilters.length > 0) {
       res = res.filter((f) => {
-        const n = getPer100g(f);
-        return calFilters.some((cf) => {
-          if (cf.startsWith('Under 50')) return n.calories < 50;
-          if (cf.startsWith('Under 100')) return n.calories < 100;
-          if (cf.startsWith('100')) return n.calories >= 100 && n.calories <= 250;
-          if (cf.startsWith('250')) return n.calories >= 250 && n.calories <= 500;
-          if (cf.startsWith('500')) return n.calories >= 500;
-          return true;
-        });
+        const n = getPer100gFood(f);
+        return calFilters.some((cf) => calorieBucketMatches(cf, n.calories));
       });
     }
 
     const protFilters = filters.protein || [];
     if (protFilters.length > 0) {
       res = res.filter((f) => {
-        const n = getPer100g(f);
+        const n = getPer100gFood(f);
         return protFilters.some((pf) => {
-          if (pf.includes('30')) return n.protein >= 30;
-          if (pf.includes('20')) return n.protein >= 20;
-          if (pf.includes('10')) return n.protein >= 10;
+          if (pf.includes('≥30') || pf.includes('30g')) return n.protein >= 30;
+          if (pf.includes('≥20') || pf.includes('20g')) return n.protein >= 20;
+          if (pf.includes('≥10') || pf.includes('10g')) return n.protein >= 10;
           return true;
         });
       });
@@ -558,7 +638,7 @@ export default function FoodSearchView({
     const carbFilters = filters.carbs || [];
     if (carbFilters.length > 0) {
       res = res.filter((f) => {
-        const n = getPer100g(f);
+        const n = getPer100gFood(f);
         return carbFilters.some((cf) => {
           if (cf.startsWith('Low')) return n.carbs < 10;
           if (cf.startsWith('Medium')) return n.carbs >= 10 && n.carbs <= 30;
@@ -571,7 +651,7 @@ export default function FoodSearchView({
     const fatFilters = filters.fat || [];
     if (fatFilters.length > 0) {
       res = res.filter((f) => {
-        const n = getPer100g(f);
+        const n = getPer100gFood(f);
         return fatFilters.some((ff) => {
           if (ff.startsWith('Low')) return n.fat < 5;
           if (ff.startsWith('Medium')) return n.fat >= 5 && n.fat <= 15;
@@ -581,26 +661,65 @@ export default function FoodSearchView({
       });
     }
 
+    const dietFilters = filters.diet || [];
+    if (dietFilters.length > 0) {
+      res = res.filter((f) => dietFilters.some((d) => matchesDietLabel(f, d)));
+    }
+
+    const sourceFilters = filters.source || [];
+    if (!skipSourceFilter && sourceFilters.length > 0) {
+      res = res.filter((f) => sourceFilters.some((o) => matchesSourceOption(f, o)));
+    }
+
     const sortOpts = filters.sort || [];
     if (sortOpts.length > 0) {
       const s = sortOpts[0];
-      if (s.startsWith('Lowest calories')) res.sort((a, b) => getPer100g(a).calories - getPer100g(b).calories);
-      else if (s.startsWith('Highest protein')) res.sort((a, b) => getPer100g(b).protein - getPer100g(a).protein);
-      else if (s.startsWith('Best protein')) {
+      if (s.startsWith('Lowest calories')) {
+        res.sort((a, b) => getPer100gFood(a).calories - getPer100gFood(b).calories);
+      } else if (s.startsWith('Highest protein')) {
+        res.sort((a, b) => getPer100gFood(b).protein - getPer100gFood(a).protein);
+      } else if (s.startsWith('Best protein')) {
         res.sort((a, b) => {
-          const aN = getPer100g(a);
-          const bN = getPer100g(b);
+          const aN = getPer100gFood(a);
+          const bN = getPer100gFood(b);
           return (bN.protein / (bN.calories || 1)) - (aN.protein / (aN.calories || 1));
         });
-      } else if (s.startsWith('Lowest fat')) res.sort((a, b) => getPer100g(a).fat - getPer100g(b).fat);
+      } else if (s.startsWith('Lowest fat')) {
+        res.sort((a, b) => getPer100gFood(a).fat - getPer100gFood(b).fat);
+      }
     }
 
     return res;
   };
 
+  const filterBasePool = useMemo(() => {
+    const map = new Map();
+    if (topTab === 'Saved foods') {
+      savedFoodsList.forEach((food) => map.set(String(food.id), food));
+      return Array.from(map.values());
+    }
+    FOOD_DATABASE.forEach((row) => map.set(String(row.id), buildLocalFoodModel(row)));
+    savedFoodsList.forEach((food) => map.set(String(food.id), food));
+    myFoods.searchModels.forEach((food) => map.set(String(food.id), food));
+    return Array.from(map.values());
+  }, [topTab, savedFoodsList, myFoods.searchModels]);
+
+  const hasBrowseFilters = BROWSE_FILTER_KEYS.some((k) => (filters[k] || []).length > 0);
   const isSearching = debouncedQuery.length > 0;
-  const results = applyClientFilters(apiResults);
+  const showResultsPanel = isSearching || hasBrowseFilters;
+  const baseResults = isSearching ? apiResults : (hasBrowseFilters ? filterBasePool : []);
+  const results = applyClientFilters(baseResults, { skipSourceFilter: isSearching });
   const hasResults = results.length > 0;
+  const resultsSectionTitle = isSearching ? 'Results from FatSecret' : 'Results';
+
+  const sessionBlocking = isSearching && authLoading;
+  const needSignIn = isSearching && !authLoading && authStatus === 'unauthenticated';
+  const canShowFatSecretBlock =
+    showResultsPanel &&
+    !sessionBlocking &&
+    !needSignIn &&
+    !(isSearching && authStatus === 'authenticated' && loading) &&
+    !(isSearching && searchError && authStatus === 'authenticated');
 
   if (compareSession) {
     return (
@@ -715,7 +834,7 @@ export default function FoodSearchView({
             keyboardShouldPersistTaps="handled"
             contentContainerStyle={styles.resultsContent}
           >
-            {topTab === 'All' && !isSearching && (
+            {topTab === 'All' && !isSearching && !hasBrowseFilters && (
               <>
                 {savedFoodsHook.loading && savedFoodsList.length === 0 ? (
                   <View style={styles.loadingState}>
@@ -754,7 +873,7 @@ export default function FoodSearchView({
               </>
             )}
 
-            {topTab === 'Saved foods' && !isSearching && (
+            {topTab === 'Saved foods' && !isSearching && !hasBrowseFilters && (
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>Saved foods</Text>
                 {savedFoodsHook.loading && savedFoodsList.length === 0 ? (
@@ -783,31 +902,46 @@ export default function FoodSearchView({
               </View>
             )}
 
-            {isSearching && loading && (
+            {sessionBlocking && (
+              <View style={styles.loadingState}>
+                <ActivityIndicator size="small" color={Colors.primary} />
+                <Text style={styles.loadingText}>Loading your session…</Text>
+              </View>
+            )}
+
+            {needSignIn && (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyIcon}>🔐</Text>
+                <Text style={styles.emptyTitle}>Sign in required</Text>
+                <Text style={styles.emptySubtitle}>Sign in to search foods and recipes.</Text>
+              </View>
+            )}
+
+            {isSearching && authStatus === 'authenticated' && loading && (
               <View style={styles.loadingState}>
                 <ActivityIndicator size="small" color={Colors.primary} />
                 <Text style={styles.loadingText}>Searching foods...</Text>
               </View>
             )}
 
-            {isSearching && !loading && searchError && (
+            {isSearching && authStatus === 'authenticated' && !loading && searchError && (
               <View style={styles.emptyState}>
                 <Text style={styles.emptyIcon}>⚠️</Text>
-                <Text style={styles.emptyTitle}>Something went wrong</Text>
+                <Text style={styles.emptyTitle}>{"Couldn't load search results"}</Text>
                 <Text style={styles.emptySubtitle}>{searchError}</Text>
               </View>
             )}
 
-            {isSearching && !loading && !searchError && hasResults && (
+            {canShowFatSecretBlock && hasResults && (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Results from FatSecret</Text>
+                <Text style={styles.sectionTitle}>{resultsSectionTitle}</Text>
                 {results.map((food) => (
                   <FoodResultCard key={food.id} food={food} onPress={handleFoodPress} onAdd={handleAddPress} />
                 ))}
               </View>
             )}
 
-            {isSearching && !loading && !searchError && !hasResults && (
+            {canShowFatSecretBlock && !hasResults && (
               <SearchEmptyState
                 query={debouncedQuery}
                 onAI={() => {}}
@@ -815,7 +949,7 @@ export default function FoodSearchView({
               />
             )}
 
-            {isSearching && !loading && (
+            {isSearching && authStatus === 'authenticated' && !loading && (
               <TouchableOpacity style={styles.aiFloatingBtn} activeOpacity={0.85}>
                 <Sparkles size={16} color={Colors.textPrimary} />
                 <Text style={styles.aiFloatingText}>Generate results using AI</Text>
@@ -833,6 +967,7 @@ export default function FoodSearchView({
         filters={filters}
         onApply={handleApplyFilters}
         onClose={() => setFilterSheetOpen(false)}
+        onReset={() => setFilters(emptyFoodSearchFilters())}
       />
 
       <AddToLogSheet

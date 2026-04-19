@@ -1,13 +1,11 @@
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
-import { Grid2x2 } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import { habitCategories } from '@/data/mockData';
-import { habitIconMap } from './habitIconMap';
+import { HabitCategoryIcon } from './habitIconMap';
 
 function CategoryCard({ category, isSelected, onSelect }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
-  const IconComponent = habitIconMap[category.iconName] || Grid2x2;
 
   return (
     <TouchableOpacity
@@ -17,7 +15,7 @@ function CategoryCard({ category, isSelected, onSelect }) {
     >
       <Text style={styles.cardName} numberOfLines={2}>{category.name}</Text>
       <View style={[styles.iconBox, { backgroundColor: category.iconBgColor }]}>
-        <IconComponent size={20} color={category.iconColor} />
+        <HabitCategoryIcon iconName={category.iconName} category={category.name} size={20} />
       </View>
     </TouchableOpacity>
   );

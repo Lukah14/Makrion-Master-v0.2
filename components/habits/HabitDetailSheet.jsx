@@ -2,7 +2,7 @@ import { View, Text, TouchableOpacity, Modal, ScrollView, StyleSheet, Pressable 
 import { X, Pencil, SkipForward, Trash2, Copy, Flame, Calendar, Clock, Target } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import { Layout } from '@/constants/layout';
-import { habitIconMap, getIconForCategory } from './habitIconMap';
+import { HabitCategoryIcon } from './habitIconMap';
 import {
   normalizeNumericConditionType,
   getNumericTargetValue,
@@ -59,10 +59,7 @@ export default function HabitDetailSheet({ habit, visible, onClose, onEdit, onSk
 
           <View style={styles.header}>
             <View style={[styles.iconCircle, { backgroundColor: habit.iconBg || '#E8F4FD' }]}>
-              {(() => {
-                const IconComp = (habit.iconName && habitIconMap[habit.iconName]) || getIconForCategory(habit.category);
-                return <IconComp size={20} color={habit.iconColor || Colors.textPrimary} />;
-              })()}
+              <HabitCategoryIcon iconName={habit.iconName} category={habit.category} size={20} />
             </View>
             <View style={styles.headerInfo}>
               <Text style={styles.habitName}>{habit.name}</Text>

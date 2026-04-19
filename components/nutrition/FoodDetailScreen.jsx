@@ -20,9 +20,7 @@ import {
   getServingDropdownOptions,
   defaultQuantityForServing,
 } from '@/lib/servingUtils';
-
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+import { fetchFatSecretFoodGetJson } from '@/lib/foodSearchApi';
 
 const ICON_VERSUS = require('@/src/Icons/Versus.png');
 
@@ -270,27 +268,23 @@ export default function FoodDetailScreen({ food: initialFood, onBack, onAddToLog
   const fetchFoodDetail = async (foodId) => {
     setLoading(true);
     try {
-      const url = `${SUPABASE_URL}/functions/v1/fatsecret-proxy?action=get&food_id=${foodId}`;
-      const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const foodDetail = data?.food;
-        if (foodDetail) {
-          const normalized = normalizeServingsFromDetail(foodDetail);
-          if (normalized.length > 0) {
-            const withGram = ensureGramsOption(normalized) || normalized;
-            setServings(withGram);
-            const best = selectBestServing(withGram);
-            if (best) {
-              setSelectedServing(best);
-              setQuantity(defaultQuantityForServing(best));
-            }
+      const data = await fetchFatSecretFoodGetJson(foodId);
+      const foodDetail = data?.food;
+      if (foodDetail) {
+        const normalized = normalizeServingsFromDetail(foodDetail);
+        if (normalized.length > 0) {
+          const withGram = ensureGramsOption(normalized) || normalized;
+          setServings(withGram);
+          const best = selectBestServing(withGram);
+          if (best) {
+            setSelectedServing(best);
+            setQuantity(defaultQuantityForServing(best));
           }
         }
       }
-    } catch {}
+    } catch {
+      /* keep search-hit servings; detail is optional */
+    }
     setLoading(false);
   };
 

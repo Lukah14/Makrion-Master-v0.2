@@ -3,7 +3,7 @@ import { useRouter } from 'expo-router';
 import { ChevronRight, Check } from 'lucide-react-native';
 import Card from '@/components/common/Card';
 import { useTheme } from '@/context/ThemeContext';
-import { habitIconMap, getIconForCategory } from '@/components/habits/habitIconMap';
+import { HabitCategoryIcon } from '@/components/habits/habitIconMap';
 import { normalizeNumericConditionType, NUMERIC_CONDITION, habitCountsTowardDailyCompletion } from '@/lib/habitNumericCondition';
 
 function habitProgressLine(h) {
@@ -41,10 +41,7 @@ function HabitRow({ habit, onPress }) {
       activeOpacity={0.7}
     >
       <View style={[styles.habitIconWrap, { backgroundColor: habit.iconBg || '#8B5CF6' }]}>
-        {(() => {
-          const IconComp = (habit.iconName && habitIconMap[habit.iconName]) || getIconForCategory(habit.category);
-          return <IconComp size={17} color={habit.iconColor || '#FFFFFF'} />;
-        })()}
+        <HabitCategoryIcon iconName={habit.iconName} category={habit.category} size={17} />
       </View>
 
       <View style={styles.habitTextCol}>

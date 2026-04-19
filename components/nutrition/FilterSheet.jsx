@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View, Text, Modal, TouchableOpacity, ScrollView,
   StyleSheet, Pressable, Platform,
 } from 'react-native';
 import { X, Check } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
-import { FILTER_OPTIONS } from '@/data/foodDatabase';
+import { FILTER_OPTIONS, emptyFoodSearchFilters } from '@/data/foodDatabase';
 
 const FILTER_KEYS = ['category', 'calories', 'protein', 'carbs', 'fat', 'diet', 'source', 'sort'];
 const FILTER_LABELS = {
@@ -19,12 +19,19 @@ const FILTER_LABELS = {
   sort: 'Sort by',
 };
 
-export default function FilterSheet({ visible, activeFilter, filters, onApply, onClose }) {
+export default function FilterSheet({ visible, activeFilter, filters, onApply, onClose, onReset }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
 
   const [localFilters, setLocalFilters] = useState(filters);
   const [section, setSection] = useState(activeFilter || 'category');
+
+  useEffect(() => {
+    if (visible) {
+      setLocalFilters(filters);
+      setSection(activeFilter || 'category');
+    }
+  }, [visible, filters, activeFilter]);
 
   const toggle = (key, value) => {
     setLocalFilters((prev) => {
@@ -40,13 +47,12 @@ export default function FilterSheet({ visible, activeFilter, filters, onApply, o
   };
 
   const handleReset = () => {
-    const empty = {};
-    FILTER_KEYS.forEach((k) => (empty[k] = []));
-    setLocalFilters(empty);
+    setLocalFilters(emptyFoodSearchFilters());
+    onReset?.();
   };
 
   const handleApply = () => {
-    onApply(localFilters);
+    onApply({ ...filters, ...localFilters });
     onClose();
   };
 

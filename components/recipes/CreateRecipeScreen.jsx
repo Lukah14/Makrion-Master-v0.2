@@ -4,6 +4,7 @@ import {
   StyleSheet, Platform, Alert, KeyboardAvoidingView,
   ActivityIndicator, Image,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArrowLeft, Plus, Trash2, ChefHat, Clock, Users, Pencil,
   Search, X,
@@ -11,24 +12,17 @@ import {
 import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/context/AuthContext';
 import { useRecipes } from '@/hooks/useRecipes';
-import { buildFoodModelFromSearch } from '@/lib/servingUtils';
 import { useMyFoods } from '@/hooks/useMyFoods';
+import { useDebounce } from '@/hooks/useDebounce';
+import {
+  fetchFatSecretFoodSearchJson,
+  mapFatSecretProxyFoodsToModels,
+  isFatSecretFoodSearchConfigured,
+} from '@/lib/foodSearchApi';
 import { myFoodToSearchModel } from '@/services/foodService';
 import { getCategoryIcon } from './foodCategoryIcons';
 
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-
 function round1(n) { return Math.round(n * 10) / 10; }
-
-async function searchFatSecret(query) {
-  const url = `${SUPABASE_URL}/functions/v1/fatsecret-proxy?action=search&q=${encodeURIComponent(query)}&page=0&max_results=20`;
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
-  });
-  if (!res.ok) throw new Error('Search failed');
-  return res.json();
-}
 
 function nutrientsForGrams(per100g, g) {
   const ratio = g / 100;
@@ -41,6 +35,15 @@ function nutrientsForGrams(per100g, g) {
 }
 
 function extractPer100g(food) {
+  const raw = food._raw;
+  if (raw?.nutritionPer100g) {
+    const n = raw.nutritionPer100g;
+    return { kcal: n.calories || n.kcal || 0, protein: n.protein || 0, carbs: n.carbs || n.carbohydrate || 0, fat: n.fat || 0 };
+  }
+  if (raw?.per100g) {
+    const p = raw.per100g;
+    return { kcal: p.kcal || p.calories || 0, protein: p.protein || 0, carbs: p.carbs || p.carbohydrate || 0, fat: p.fat || 0 };
+  }
   if (food.nutritionPer100g) {
     const n = food.nutritionPer100g;
     return { kcal: n.calories || n.kcal || 0, protein: n.protein || 0, carbs: n.carbs || n.carbohydrate || 0, fat: n.fat || 0 };
@@ -57,34 +60,85 @@ function extractPer100g(food) {
 function IngredientSearchScreen({ onSelect, onBack }) {
   const { colors: Colors } = useTheme();
   const s = createStyles(Colors);
+  const { user, loading: authLoading } = useAuth();
   const myFoodsHook = useMyFoods();
+  /** Always read latest list inside the search timer (do not put `foods` in effect deps — snapshot churn resets debounce and can starve requests). */
+  const myFoodsRef = useRef(myFoodsHook.foods);
+  myFoodsRef.current = myFoodsHook.foods;
 
   const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery, setDebouncedImmediate] = useDebounce('', 300);
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
-  const timerRef = useRef(null);
+  const [searchError, setSearchError] = useState(null);
+
+  const authStatus = authLoading ? 'loading' : user?.uid ? 'authenticated' : 'unauthenticated';
 
   useEffect(() => {
-    clearTimeout(timerRef.current);
-    const q = query.trim();
-    if (!q) { setResults([]); setLoading(false); return; }
+    if (authLoading) return;
+    if (!user?.uid) {
+      setQuery('');
+      setDebouncedImmediate('');
+      setResults([]);
+      setSearchError(null);
+      setLoading(false);
+    }
+  }, [user?.uid, authLoading, setDebouncedImmediate]);
+
+  useEffect(() => {
+    const q = debouncedQuery.trim();
+    if (authLoading || !user?.uid) {
+      return undefined;
+    }
+    if (!q) {
+      setResults([]);
+      setLoading(false);
+      setSearchError(null);
+      return undefined;
+    }
+    if (!isFatSecretFoodSearchConfigured()) {
+      setResults([]);
+      setLoading(false);
+      setSearchError('Food search is not configured.');
+      return undefined;
+    }
+
+    let cancelled = false;
     setLoading(true);
-    timerRef.current = setTimeout(async () => {
+    setSearchError(null);
+
+    (async () => {
       try {
-        const data = await searchFatSecret(q);
-        const api = (data.foods || []).map(buildFoodModelFromSearch);
-        const my = (myFoodsHook.foods || [])
-          .filter((f) => f.name?.toLowerCase().includes(q.toLowerCase()))
+        const data = await fetchFatSecretFoodSearchJson(q, 0, 20, { logIngredient: true });
+        if (cancelled) return;
+        const api = mapFatSecretProxyFoodsToModels(data.foods);
+        const qLower = q.toLowerCase();
+        const my = (myFoodsRef.current || [])
+          .filter((f) => {
+            const name = (f.name || '').toLowerCase();
+            const brand = (f.brand || '').toLowerCase();
+            return name.includes(qLower) || brand.includes(qLower);
+          })
           .map(myFoodToSearchModel);
         setResults([...my, ...api]);
-      } catch {
-        setResults([]);
+      } catch (e) {
+        if (!cancelled) {
+          setResults([]);
+          let msg = e?.message || "Couldn't load search results. Please try again.";
+          if (user?.uid && /sign in to search foods/i.test(msg)) {
+            msg = "Couldn't load search results. Please try again.";
+          }
+          setSearchError(msg);
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
-    }, 400);
-    return () => clearTimeout(timerRef.current);
-  }, [query, myFoodsHook.foods]);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedQuery, user?.uid, authLoading]);
 
   const handlePick = (food) => {
     const per100g = extractPer100g(food);
@@ -117,21 +171,53 @@ function IngredientSearchScreen({ onSelect, onBack }) {
           placeholder="Search foods..."
           placeholderTextColor={Colors.textTertiary}
           value={query}
-          onChangeText={setQuery}
+          onChangeText={(t) => {
+            setQuery(t);
+            setDebouncedQuery(t);
+          }}
           autoFocus
           returnKeyType="search"
           selectionColor={Colors.textPrimary}
         />
         {query.length > 0 && (
-          <TouchableOpacity onPress={() => { setQuery(''); setResults([]); }} activeOpacity={0.7}>
+          <TouchableOpacity
+            onPress={() => {
+              setQuery('');
+              setDebouncedQuery('');
+              setResults([]);
+              setSearchError(null);
+            }}
+            activeOpacity={0.7}
+          >
             <X size={18} color={Colors.textTertiary} />
           </TouchableOpacity>
         )}
       </View>
 
-      {loading && <ActivityIndicator style={{ marginTop: 24 }} color={Colors.textTertiary} />}
+      {authLoading && debouncedQuery.trim().length > 0 ? (
+        <View style={{ paddingHorizontal: 20, paddingTop: 16, alignItems: 'center' }}>
+          <ActivityIndicator color={Colors.textTertiary} />
+          <Text style={{ marginTop: 8, color: Colors.textTertiary, fontSize: 14 }}>Loading your session…</Text>
+        </View>
+      ) : null}
 
-      <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent} keyboardShouldPersistTaps="handled">
+      {!authLoading && authStatus === 'unauthenticated' && debouncedQuery.trim().length > 0 ? (
+        <View style={{ paddingHorizontal: 20, paddingTop: 16 }}>
+          <Text style={{ color: Colors.textSecondary, fontSize: 14, textAlign: 'center' }}>
+            Sign in to search foods and recipes.
+          </Text>
+        </View>
+      ) : null}
+
+      {authStatus === 'authenticated' && loading ? (
+        <ActivityIndicator style={{ marginTop: 24 }} color={Colors.textTertiary} />
+      ) : null}
+
+      <ScrollView
+        style={s.scroll}
+        contentContainerStyle={s.scrollContent}
+        keyboardShouldPersistTaps="always"
+      >
         {results.map((food, idx) => {
           const iconSrc = getCategoryIcon(food.name);
           return (
@@ -154,11 +240,19 @@ function IngredientSearchScreen({ onSelect, onBack }) {
             </TouchableOpacity>
           );
         })}
-        {!loading && query.trim().length > 0 && results.length === 0 && (
+        {authStatus === 'authenticated' && !loading && debouncedQuery.trim().length > 0 && searchError ? (
+          <View style={s.emptySearch}>
+            <Text style={[s.emptySearchText, { fontFamily: 'PlusJakartaSans-SemiBold', marginBottom: 4 }]}>
+              {"Couldn't load search results"}
+            </Text>
+            <Text style={s.emptySearchText}>{searchError}</Text>
+          </View>
+        ) : null}
+        {authStatus === 'authenticated' && !loading && !searchError && debouncedQuery.trim().length > 0 && results.length === 0 ? (
           <View style={s.emptySearch}>
             <Text style={s.emptySearchText}>No results found</Text>
           </View>
-        )}
+        ) : null}
         <View style={{ height: 60 }} />
       </ScrollView>
     </View>
@@ -246,6 +340,7 @@ function EditIngredientSheet({ ingredient, onChange, onClose }) {
 export default function CreateRecipeScreen({ onBack, onCreated }) {
   const { colors: Colors } = useTheme();
   const s = createStyles(Colors);
+  const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const { addRecipe } = useRecipes();
 
@@ -373,9 +468,12 @@ export default function CreateRecipeScreen({ onBack, onCreated }) {
 
       <ScrollView
         style={s.scroll}
-        contentContainerStyle={s.scrollContent}
+        contentContainerStyle={[
+          s.scrollContent,
+          { paddingBottom: 28 + insets.bottom + 96 },
+        ]}
         showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
+        keyboardShouldPersistTaps="always"
       >
         {/* Title */}
         <View style={s.titleCard}>
@@ -535,11 +633,11 @@ export default function CreateRecipeScreen({ onBack, onCreated }) {
           />
         </View>
 
-        <View style={{ height: 100 }} />
+        <View style={{ height: 24 }} />
       </ScrollView>
 
-      {/* Bottom CTA */}
-      <View style={s.bottomBar}>
+      {/* Bottom CTA — box-none so taps on scroll content above the button are not swallowed by this layer */}
+      <View style={s.bottomBar} pointerEvents="box-none">
         <TouchableOpacity
           style={[s.createBtn, !isValid && s.createBtnDisabled]}
           activeOpacity={isValid ? 0.85 : 1}

@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { Search, SlidersHorizontal, Bookmark, Plus, Zap, Pencil, Copy, Trash2, X, ChevronRight } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
+import { useAuth } from '@/context/AuthContext';
 import { RECIPES } from '@/data/recipeData';
 import RecipeFilterSheet, { EMPTY_FILTERS } from './RecipeFilterSheet';
 import RecipeDetailScreen from './RecipeDetailScreen';
@@ -19,9 +20,7 @@ import {
   buildFilterChips,
   removeFilterByChipId,
 } from '@/lib/recipeFilters';
-
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+import { fatSecretProxyGet } from '@/lib/foodSearchApi';
 
 const FALLBACK_IMAGES = [
   'https://images.pexels.com/photos/1640777/pexels-photo-1640777.jpeg?auto=compress&cs=tinysrgb&w=400',
@@ -67,31 +66,16 @@ function normalizeFatSecretRecipe(r, index) {
 
 async function fetchFatSecretRecipeDetail(recipeId) {
   const rawId = recipeId.startsWith('fs_') ? recipeId.slice(3) : recipeId;
-  const params = new URLSearchParams({ action: 'recipe_get', recipe_id: rawId });
-  const res = await fetch(`${SUPABASE_URL}/functions/v1/fatsecret-proxy?${params}`, {
-    headers: {
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-      'Content-Type': 'application/json',
-    },
-  });
-  if (!res.ok) throw new Error('Failed to fetch recipe detail');
-  const data = await res.json();
+  const data = await fatSecretProxyGet({ action: 'recipe_get', recipe_id: rawId });
   if (data.error) throw new Error(data.error);
   return data.recipe;
 }
 
 async function fetchFatSecretRecipes(query, recipeType) {
-  const params = new URLSearchParams({ action: 'recipes', max_results: '20' });
-  if (query.trim()) params.set('q', query.trim());
-  if (recipeType) params.set('recipe_type', recipeType);
-  const res = await fetch(`${SUPABASE_URL}/functions/v1/fatsecret-proxy?${params}`, {
-    headers: {
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-      'Content-Type': 'application/json',
-    },
-  });
-  if (!res.ok) throw new Error('Failed to fetch recipes');
-  const data = await res.json();
+  const queryParams = { action: 'recipes', max_results: '20' };
+  if (query.trim()) queryParams.q = query.trim();
+  if (recipeType) queryParams.recipe_type = recipeType;
+  const data = await fatSecretProxyGet(queryParams);
   if (data.error) throw new Error(data.error);
   return (data.recipes || []).map(normalizeFatSecretRecipe);
 }
@@ -498,6 +482,7 @@ function MyRecipesTab({ onPress, onCreate, recipes, loading, error, onDelete, em
 export default function RecipesView() {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
+  const { user, loading: authLoading } = useAuth();
 
   const {
     recipes: userRecipes,
@@ -534,6 +519,17 @@ export default function RecipesView() {
   const [showCreateRecipe, setShowCreateRecipe] = useState(false);
 
   const debounceRef = useRef(null);
+
+  useEffect(() => {
+    if (!user?.uid) {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      setQuery('');
+      setDebouncedQuery('');
+      setSearchResults([]);
+      setSearchError(null);
+      setSearchLoading(false);
+    }
+  }, [user?.uid]);
 
   const isSearching = debouncedQuery.trim().length > 0;
 
@@ -620,6 +616,7 @@ export default function RecipesView() {
 
   useEffect(() => {
     if (!debouncedQuery) return;
+    if (authLoading || !user?.uid) return;
     let cancelled = false;
     setSearchLoading(true);
     setSearchError(null);
@@ -637,7 +634,7 @@ export default function RecipesView() {
       }
     })();
     return () => { cancelled = true; };
-  }, [debouncedQuery]);
+  }, [debouncedQuery, user?.uid, authLoading]);
 
   const handleClearSearch = () => {
     setQuery('');

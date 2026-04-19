@@ -24,26 +24,20 @@ import {
   Check,
 } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
+import { useAuth } from '@/context/AuthContext';
 import { getCategoryIcon } from '@/components/recipes/foodCategoryIcons';
-import { buildFoodModelFromSearch, getServingDropdownOptions, defaultQuantityForServing } from '@/lib/servingUtils';
+import {
+  getServingDropdownOptions,
+  defaultQuantityForServing,
+  SYNTHETIC_GRAMS_ID,
+} from '@/lib/servingUtils';
+import { fetchFatSecretFoodSearchJson, mapFatSecretProxyFoodsToModels } from '@/lib/foodSearchApi';
 import {
   buildCompareSlotResolved,
   computeCompareNutrition,
 } from '@/lib/compareFoodUtils';
 
 const ICON_VERSUS = require('@/src/Icons/Versus.png');
-
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-
-async function searchFatSecret(query, page = 0) {
-  const url = `${SUPABASE_URL}/functions/v1/fatsecret-proxy?action=search&q=${encodeURIComponent(query)}&page=${page}&max_results=20`;
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
-  });
-  if (!res.ok) throw new Error('Search failed');
-  return res.json();
-}
 
 function round1(n) {
   return Math.round(n * 10) / 10;
@@ -72,7 +66,7 @@ function formatComparedPortion(slot) {
   const sel = slot.selectedServing;
   const q = slot.quantity;
   if (!sel) return '—';
-  if (sel.isGramServing) {
+  if (sel.id === SYNTHETIC_GRAMS_ID) {
     const g = round1(q);
     return `${g % 1 === 0 ? Math.round(g) : g} g`;
   }
@@ -193,12 +187,13 @@ function AddCompareFoodModal({
 }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
+  const { user, loading: authLoading } = useAuth();
   const [searchTab, setSearchTab] = useState('All');
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [apiResults, setApiResults] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
-  const searchTimer = useRef(null);
+  const [searchApiError, setSearchApiError] = useState(null);
   const queryDebounceTimer = useRef(null);
 
   useEffect(() => {
@@ -208,8 +203,21 @@ function AddCompareFoodModal({
     setDebouncedQuery('');
     setApiResults([]);
     setSearchLoading(false);
+    setSearchApiError(null);
     clearTimeout(queryDebounceTimer.current);
   }, [visible]);
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user?.uid) {
+      setQuery('');
+      setDebouncedQuery('');
+      setApiResults([]);
+      setSearchApiError(null);
+      setSearchLoading(false);
+      clearTimeout(queryDebounceTimer.current);
+    }
+  }, [user?.uid, authLoading]);
 
   const handleQueryChange = (text) => {
     setQuery(text);
@@ -218,26 +226,47 @@ function AddCompareFoodModal({
   };
 
   useEffect(() => {
-    if (!visible) return;
-    clearTimeout(searchTimer.current);
+    if (!visible) return undefined;
+    if (authLoading) {
+      return undefined;
+    }
+    if (!user?.uid) {
+      setApiResults([]);
+      setSearchLoading(false);
+      setSearchApiError(null);
+      return undefined;
+    }
     if (searchTab !== 'All' || !debouncedQuery.trim()) {
       setApiResults([]);
       setSearchLoading(false);
-      return;
+      setSearchApiError(null);
+      return undefined;
     }
+    let cancelled = false;
     setSearchLoading(true);
-    searchTimer.current = setTimeout(async () => {
+    setSearchApiError(null);
+    (async () => {
       try {
-        const data = await searchFatSecret(debouncedQuery);
-        setApiResults((data.foods || []).map(buildFoodModelFromSearch));
-      } catch {
-        setApiResults([]);
+        const data = await fetchFatSecretFoodSearchJson(debouncedQuery.trim(), 0, 20);
+        if (cancelled) return;
+        setApiResults(mapFatSecretProxyFoodsToModels(data.foods));
+      } catch (e) {
+        if (!cancelled) {
+          setApiResults([]);
+          let msg = e?.message || "Couldn't load search results. Please try again.";
+          if (user?.uid && /sign in to search foods/i.test(msg)) {
+            msg = "Couldn't load search results. Please try again.";
+          }
+          setSearchApiError(msg);
+        }
       } finally {
-        setSearchLoading(false);
+        if (!cancelled) setSearchLoading(false);
       }
-    }, 400);
-    return () => clearTimeout(searchTimer.current);
-  }, [visible, debouncedQuery, searchTab]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, debouncedQuery, searchTab, user?.uid, authLoading]);
 
   const filteredLocalFoods = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -307,6 +336,7 @@ function AddCompareFoodModal({
                   clearTimeout(queryDebounceTimer.current);
                   setDebouncedQuery('');
                   setApiResults([]);
+                  setSearchApiError(null);
                 }}
                 activeOpacity={0.7}
               >
@@ -342,7 +372,11 @@ function AddCompareFoodModal({
               </View>
             ) : null}
 
-            {searchTab === 'All' && debouncedQuery.trim() && !searchLoading && apiResults.length === 0 ? (
+            {searchTab === 'All' && searchApiError && debouncedQuery.trim() && !searchLoading ? (
+              <Text style={styles.hintError}>{searchApiError}</Text>
+            ) : null}
+
+            {searchTab === 'All' && debouncedQuery.trim() && !searchLoading && !searchApiError && apiResults.length === 0 ? (
               <Text style={styles.hint}>No results. Try another keyword.</Text>
             ) : null}
 
@@ -375,8 +409,7 @@ function CompareSlotCard({
   if (!food) return null;
   const icon = getCategoryIcon(food.name);
   const servingLabel = selectedServing?.displayLabel || food.servingText || 'Serving';
-  const isGram = selectedServing?.isGramServing;
-  const qtyUnit = isGram ? 'g' : '';
+  const qtyUnit = selectedServing?.id === SYNTHETIC_GRAMS_ID ? 'g' : '';
 
   return (
     <View style={[styles.slotCard, { width: cardWidth }]}>
@@ -524,26 +557,23 @@ export default function CompareFoodsScreen({
     patchSlot(picker.slotKey, (s) => ({
       ...s,
       selectedServing: serving,
-      quantity: serving?.isGramServing ? 100 : defaultQuantityForServing(serving),
+      quantity:
+        serving?.id === SYNTHETIC_GRAMS_ID
+          ? 100
+          : defaultQuantityForServing(serving),
     }));
   };
 
-  const qtyStepFor = (slot) => (slot.selectedServing?.isGramServing ? 10 : 0.5);
-  const qtyMinFor = (slot) => (slot.selectedServing?.isGramServing ? 1 : 0.5);
-
   const decrementQty = (key) => {
     patchSlot(key, (s) => {
-      const step = qtyStepFor(s);
-      const min = qtyMinFor(s);
+      const step = 1;
+      const min = 1;
       return { ...s, quantity: Math.max(min, round1(s.quantity - step)) };
     });
   };
 
   const incrementQty = (key) => {
-    patchSlot(key, (s) => {
-      const step = qtyStepFor(s);
-      return { ...s, quantity: round1(s.quantity + step) };
-    });
+    patchSlot(key, (s) => ({ ...s, quantity: round1(s.quantity + 1) }));
   };
 
   const nutritionList = useMemo(
@@ -867,6 +897,12 @@ const createStyles = (Colors) => StyleSheet.create({
     fontSize: 13,
     fontFamily: 'PlusJakartaSans-Medium',
     color: Colors.textTertiary,
+    marginBottom: 12,
+  },
+  hintError: {
+    fontSize: 13,
+    fontFamily: 'PlusJakartaSans-Medium',
+    color: Colors.error,
     marginBottom: 12,
   },
   searchHit: {

@@ -1,0 +1,68 @@
+{
+  "cli": {
+    "version": ">= 18.6.0",
+    "appVersionSource": "local"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleDebug"
+      },
+      "env": {
+        "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyBn-pKYqTyRp0xMcWAk58D6mPqnkwZOrKQ",
+        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "macro-lukica.firebaseapp.com",
+        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "macro-lukica",
+        "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET": "macro-lukica.firebasestorage.app",
+        "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "948141985962",
+        "EXPO_PUBLIC_FIREBASE_APP_ID": "1:948141985962:web:0691a8673a4a83b59780d3",
+        "EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID": "G-17HW78W442",
+        "EAS_BUILD_NO_EXPO_GO_WARNING": "true"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "channel": "preview",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyBn-pKYqTyRp0xMcWAk58D6mPqnkwZOrKQ",
+        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "macro-lukica.firebaseapp.com",
+        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "macro-lukica",
+        "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET": "macro-lukica.firebasestorage.app",
+        "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "948141985962",
+        "EXPO_PUBLIC_FIREBASE_APP_ID": "1:948141985962:web:0691a8673a4a83b59780d3",
+        "EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID": "G-17HW78W442",
+        "EAS_BUILD_NO_EXPO_GO_WARNING": "true"
+      }
+    },
+    "production": {
+      "channel": "production",
+      "autoIncrement": true,
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyBn-pKYqTyRp0xMcWAk58D6mPqnkwZOrKQ",
+        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "macro-lukica.firebaseapp.com",
+        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "macro-lukica",
+        "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET": "macro-lukica.firebasestorage.app",
+        "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "948141985962",
+        "EXPO_PUBLIC_FIREBASE_APP_ID": "1:948141985962:web:0691a8673a4a83b59780d3",
+        "EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID": "G-17HW78W442",
+        "EAS_BUILD_NO_EXPO_GO_WARNING": "true"
+      }
+    }
+  },
+      "submit": {
+          "production": {
+            "android": {
+              "track": "internal",
+              "releaseStatus": "draft"
+            }
+          }
+        }
+      }

@@ -6,11 +6,10 @@ import {
   updateProfile,
   onAuthStateChanged,
   GoogleAuthProvider,
-  signInWithPopup,
+  signInWithCredential,
 } from 'firebase/auth';
-import { disableNetwork, enableNetwork } from 'firebase/firestore';
-import { auth, db } from '@/lib/firebase';
-import { createUserDocument, ensureUserDocument } from './userService';
+import { auth } from '@/lib/firebase';
+import { createUserDocument, ensureUserDocument, ensureGoogleUserDocument } from './userService';
 
 export async function signUp(email, password, displayName) {
   const credential = await createUserWithEmailAndPassword(auth, email, password);
@@ -27,31 +26,34 @@ export async function signIn(email, password) {
   return credential.user;
 }
 
+/**
+ * Sign out only. Do not disable Firestore network here — that wedges listeners and races with
+ * profile re-subscribe after the next login. Navigation to `/(auth)/login` is handled by the root gate.
+ */
 export async function signOutUser() {
-  try {
-    await disableNetwork(db);
-  } catch {
-    /* ignore */
-  }
   await signOut(auth);
-  try {
-    await enableNetwork(db);
-  } catch {
-    /* ignore */
-  }
 }
 
 export async function resetPassword(email) {
   await sendPasswordResetEmail(auth, email);
 }
 
-export async function signInWithGoogle() {
-  const provider = new GoogleAuthProvider();
-  provider.addScope('profile');
-  provider.addScope('email');
-  const credential = await signInWithPopup(auth, provider);
-  await ensureUserDocument(credential.user);
-  return credential.user;
+/**
+ * Sign in with a Google ID token (e.g. from @react-native-google-signin/google-signin or tests).
+ * Creates a Firebase Auth credential and authenticates. Firestore profile
+ * is created/updated via `ensureGoogleUserDocument`.
+ */
+export async function signInWithGoogleIdToken(idToken) {
+  console.log('[FIREBASE_AUTH_START]');
+  const credential = GoogleAuthProvider.credential(idToken);
+  const result = await signInWithCredential(auth, credential);
+  console.log('[FIREBASE_AUTH_SUCCESS]', result.user.uid);
+
+  console.log('[FIRESTORE_PROFILE_CREATE_START]');
+  await ensureGoogleUserDocument(result.user);
+  console.log('[FIRESTORE_PROFILE_CREATE_SUCCESS]');
+
+  return result.user;
 }
 
 export function onAuthChange(callback) {

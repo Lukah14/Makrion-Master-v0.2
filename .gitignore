@@ -30,6 +30,9 @@ yarn-error.*
 # local env files
 .env*.local
 .env
+# Firebase Functions local secrets (emulator); keep .env.example tracked
+functions/.secret.local
+!functions/.env.example
 
 # Firebase Admin service account keys (never commit)
 *-firebase-adminsdk-*.json

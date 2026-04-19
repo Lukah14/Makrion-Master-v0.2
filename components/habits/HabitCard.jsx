@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Pressable, TextInput, Keyboar
 import { Check, Plus, Minus, Play, Pause, Square, RotateCcw } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import { Layout } from '@/constants/layout';
-import { habitIconMap, getIconForCategory } from './habitIconMap';
+import { HabitCategoryIcon } from './habitIconMap';
 import { timerTargetToSeconds } from '@/lib/habitDayState';
 import {
   normalizeNumericConditionType,
@@ -296,10 +296,7 @@ export default function HabitCard({
     >
       <View style={styles.mainRow}>
         <View style={[styles.iconCircle, { backgroundColor: habit.iconBg || '#E8F4FD' }]}>
-          {(() => {
-            const IconComp = (habit.iconName && habitIconMap[habit.iconName]) || getIconForCategory(habit.category);
-            return <IconComp size={20} color={habit.iconColor || Colors.textPrimary} />;
-          })()}
+          <HabitCategoryIcon iconName={habit.iconName} category={habit.category} size={20} />
         </View>
 
         <View style={styles.info}>

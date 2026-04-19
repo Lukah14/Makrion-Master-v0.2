@@ -16,7 +16,7 @@ import {
 } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import { habitCategories } from '@/data/mockData';
-import { habitIconMap } from './habitIconMap';
+import { HabitCategoryIcon, getIconSource } from './habitIconMap';
 import HabitFrequencyFormFields from '@/components/habits/FrequencyFormFields';
 import {
   deriveFrequencyStateFromHabit,
@@ -242,10 +242,7 @@ export default function HabitDetailEdit({ habit, onSave, onDelete, onRestart }) 
           <Text style={styles.rowLabel}>Category</Text>
           <Text style={[styles.rowValue, styles.valueGreen]} numberOfLines={1}>{categoryLabel}</Text>
           <View style={[styles.categoryBadge, { backgroundColor: selectedCategory?.iconBgColor || habit.iconBg || '#E8F4FD' }]}>
-            {(() => {
-              const IconComp = habitIconMap[selectedCategory?.iconName || habit.iconName] || habitIconMap['grid-2x2'];
-              return IconComp ? <IconComp size={18} color={selectedCategory?.iconColor || habit.iconColor || '#000'} /> : null;
-            })()}
+            <HabitCategoryIcon iconName={selectedCategory?.iconName || habit.iconName} category={habit.category} size={18} />
           </View>
           <ChevronRight size={18} color={Colors.textTertiary} />
         </TouchableOpacity>
@@ -375,7 +372,6 @@ export default function HabitDetailEdit({ habit, onSave, onDelete, onRestart }) 
             </View>
             <ScrollView style={styles.modalScroll} keyboardShouldPersistTaps="handled">
               {displayCategories.map((cat) => {
-                const IconComp = habitIconMap[cat.iconName] || habitIconMap['grid-2x2'];
                 const sel = selectedCategory?.id === cat.id;
                 return (
                   <TouchableOpacity
@@ -385,7 +381,7 @@ export default function HabitDetailEdit({ habit, onSave, onDelete, onRestart }) 
                     activeOpacity={0.7}
                   >
                     <View style={[styles.catIconBox, { backgroundColor: cat.iconBgColor }]}>
-                      <IconComp size={20} color={cat.iconColor} />
+                      <HabitCategoryIcon iconName={cat.iconName} category={cat.name} size={20} />
                     </View>
                     <Text style={[styles.catName, { color: Colors.textPrimary }]}>{cat.name}</Text>
                   </TouchableOpacity>

@@ -19,7 +19,7 @@ import { useWater } from '@/hooks/useWater';
 import { useActivityLog } from '@/hooks/useActivityLog';
 import { useSteps } from '@/hooks/useSteps';
 import { useProgress } from '@/hooks/useProgress';
-import { useDomainStreaks } from '@/hooks/useDomainStreaks';
+import { useDomainStreaksContext } from '@/context/DomainStreaksContext';
 import StrikesRow from '@/components/dashboard/StrikesRow';
 import CalendarModal from '@/components/calendar/CalendarModal';
 import CalorieRing from '@/components/dashboard/CalorieRing';
@@ -84,7 +84,7 @@ export default function HomeScreen() {
     adjustMl,
   } = useWater(dateKey);
 
-  const domainStreaks = useDomainStreaks(calendarRefreshKey);
+  const domainStreaks = useDomainStreaksContext();
 
   useFocusEffect(
     useCallback(() => {
@@ -390,9 +390,7 @@ export default function HomeScreen() {
         </View>
 
         <StrikesRow
-          nutritionStreak={domainStreaks.nutritionStreak}
-          activityStreak={domainStreaks.activityStreak}
-          habitTrackerStreak={domainStreaks.habitTrackerStreak}
+          currentStreak={domainStreaks.currentStreak}
           loading={domainStreaks.loading}
           error={domainStreaks.error}
           onPressNutrition={() => router.push('/(tabs)/nutrition')}

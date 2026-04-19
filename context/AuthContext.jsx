@@ -10,6 +10,7 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const authResolvedRef = useRef(false);
+  const prevUidRef = useRef(/** @type {string | null} */ (null));
 
   useEffect(() => {
     let cancelled = false;
@@ -57,6 +58,19 @@ export function AuthProvider({ children }) {
       unsubscribe = onAuthChange((firebaseUser) => {
         authResolvedRef.current = true;
         clearTimeout(failsafe);
+        const nextUid = firebaseUser?.uid ?? null;
+        if (__DEV__) {
+          const prev = prevUidRef.current;
+          if (prev !== nextUid) {
+            console.log('[AUTH_SESSION]', {
+              fromUid: prev ? `${prev.slice(0, 8)}…` : null,
+              toUid: nextUid ? `${nextUid.slice(0, 8)}…` : null,
+            });
+          }
+          prevUidRef.current = nextUid;
+        } else {
+          prevUidRef.current = nextUid;
+        }
         if (firebaseUser?.uid) {
           flowLog('AUTH_USER_FOUND', firebaseUser.uid);
           bootLog('auth user detected', firebaseUser.uid);

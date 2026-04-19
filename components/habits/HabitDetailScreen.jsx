@@ -5,7 +5,7 @@ import { useTheme } from '@/context/ThemeContext';
 import HabitDetailCalendar from './HabitDetailCalendar';
 import HabitDetailStatistics from './HabitDetailStatistics';
 import HabitDetailEdit from './HabitDetailEdit';
-import { habitIconMap, getIconForCategory } from './habitIconMap';
+import { HabitCategoryIcon } from './habitIconMap';
 
 const ACCENT = '#E8526A';
 
@@ -52,10 +52,7 @@ export default function HabitDetailScreen({
           </TouchableOpacity>
           <Text style={styles.headerTitle} numberOfLines={1}>{habit.name}</Text>
           <View style={[styles.categoryIcon, { backgroundColor: habit.iconBg || '#E8F4FD' }]}>
-            {(() => {
-              const IconComp = (habit.iconName && habitIconMap[habit.iconName]) || getIconForCategory(habit.category);
-              return <IconComp size={18} color={habit.iconColor || '#000000'} />;
-            })()}
+            <HabitCategoryIcon iconName={habit.iconName} category={habit.category} size={18} />
           </View>
         </View>
 

@@ -21,6 +21,7 @@ import CalendarModal from '@/components/calendar/CalendarModal';
 import SelectedDateBar from '@/components/calendar/SelectedDateBar';
 import { todayDateKey, addDaysToDateKey } from '@/lib/dateKey';
 import StrikeBadge from '@/components/common/StrikeBadge';
+import { useDomainStreaksContext } from '@/context/DomainStreaksContext';
 import HabitSubNav from '@/components/habits/HabitSubNav';
 import TodayView from '@/components/habits/TodayView';
 import MemorableMomentsSection from '@/components/habits/MemorableMomentsSection';
@@ -55,6 +56,7 @@ export default function HabitsScreen() {
   const { user } = useAuth();
 
   const { dateKey, bumpCalendarRefresh } = useNutritionDate();
+  const { currentStreak } = useDomainStreaksContext();
   const today = todayDateKey();
   const [runningTimers, setRunningTimers] = useState({});
   const timerSegmentsRef = useRef({});
@@ -571,7 +573,7 @@ export default function HabitsScreen() {
             {activeSubpage === 'today' ? 'Today' : 'Habits'}
           </Text>
           <View style={styles.headerActions}>
-            <StrikeBadge count={todayComplete ? 1 : 0} color="#AF52DE" />
+            <StrikeBadge count={currentStreak} color="#AF52DE" />
           </View>
         </View>
 

@@ -2,15 +2,17 @@ import { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, ActivityIndicator, KeyboardAvoidingView,
-  Platform, ScrollView,
+  Platform, ScrollView, Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Mail, Lock, Eye, EyeOff, UserRound } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import { signUp } from '@/services/authService';
+import { useGoogleAuth } from '@/hooks/useGoogleAuth';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const GOOGLE_LOGO = { uri: 'https://developers.google.com/identity/images/g-logo.png' };
 
 export default function RegisterScreen() {
   const { colors: Colors } = useTheme();
@@ -24,6 +26,16 @@ export default function RegisterScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const {
+    promptGoogleSignIn,
+    googleAuthLoading,
+    googleAuthError,
+    isGoogleReady,
+  } = useGoogleAuth();
+
+  const anyLoading = loading || googleAuthLoading;
+  const displayError = error || googleAuthError;
 
   const validate = () => {
     if (!name.trim()) return 'Name is required';
@@ -75,7 +87,31 @@ export default function RegisterScreen() {
             <Text style={s.subtitle}>Start your health journey today</Text>
           </View>
 
-          {error ? <Text style={s.error}>{error}</Text> : null}
+          {displayError ? <Text style={s.error}>{displayError}</Text> : null}
+
+          <TouchableOpacity
+            style={[s.googleBtn, { borderColor: Colors.border }, anyLoading && { opacity: 0.7 }]}
+            onPress={promptGoogleSignIn}
+            disabled={!isGoogleReady || anyLoading}
+            activeOpacity={0.8}
+          >
+            {googleAuthLoading ? (
+              <ActivityIndicator color={Colors.textPrimary} />
+            ) : (
+              <>
+                <Image source={GOOGLE_LOGO} style={s.googleIcon} />
+                <Text style={[s.googleBtnText, { color: Colors.textPrimary }]}>
+                  Continue with Google
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+
+          <View style={s.dividerRow}>
+            <View style={[s.dividerLine, { backgroundColor: Colors.border }]} />
+            <Text style={[s.dividerText, { color: Colors.textTertiary }]}>or</Text>
+            <View style={[s.dividerLine, { backgroundColor: Colors.border }]} />
+          </View>
 
           <View style={s.inputWrap}>
             <UserRound size={18} color={Colors.textTertiary} />
@@ -133,9 +169,9 @@ export default function RegisterScreen() {
           </View>
 
           <TouchableOpacity
-            style={[s.primaryBtn, loading && { opacity: 0.7 }]}
+            style={[s.primaryBtn, anyLoading && { opacity: 0.7 }]}
             onPress={handleRegister}
-            disabled={loading}
+            disabled={anyLoading}
             activeOpacity={0.8}
           >
             {loading
@@ -165,6 +201,18 @@ const createStyles = (C) => StyleSheet.create({
     color: C.error, fontSize: 14, fontFamily: 'PlusJakartaSans-Medium',
     backgroundColor: C.proteinLight, padding: 12, borderRadius: 10, marginBottom: 16, overflow: 'hidden',
   },
+  googleBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    borderRadius: 14, paddingVertical: 14, borderWidth: 1, marginBottom: 16,
+    backgroundColor: 'transparent', gap: 10,
+  },
+  googleIcon: { width: 20, height: 20, resizeMode: 'contain' },
+  googleBtnText: { fontSize: 16, fontFamily: 'PlusJakartaSans-SemiBold' },
+  dividerRow: {
+    flexDirection: 'row', alignItems: 'center', marginBottom: 16,
+  },
+  dividerLine: { flex: 1, height: StyleSheet.hairlineWidth },
+  dividerText: { marginHorizontal: 14, fontSize: 14, fontFamily: 'PlusJakartaSans-Medium' },
   inputWrap: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
     backgroundColor: C.cardBackground, borderRadius: 14,

@@ -18,6 +18,7 @@ export function NutritionDateProvider({ children }) {
   useEffect(() => {
     if (!user) {
       setDateKeyState(todayDateKey());
+      setCalendarRefreshKey(0);
     }
   }, [user?.uid]);
 

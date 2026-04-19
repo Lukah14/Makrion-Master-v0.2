@@ -3,38 +3,10 @@
  */
 
 import { dayHasMeaningfulProgress } from '@/services/dailyMeaningfulDayService';
-import {
-  collection,
-  query,
-  where,
-  orderBy,
-  getDocs,
-} from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { fetchMemorableMomentDateKeys } from '@/services/memorableMomentService';
 import { getMonthDateKeyRange } from '@/lib/calendarUtils';
 
-function momentsRef(uid) {
-  return collection(db, 'profiles', uid, 'memorable_moments');
-}
-
-/**
- * All memorable moments in [startKey, endKey] (inclusive).
- */
-export async function fetchMemorableMomentDateKeys(uid, startKey, endKey) {
-  const q = query(
-    momentsRef(uid),
-    where('dateKey', '>=', startKey),
-    where('dateKey', '<=', endKey),
-    orderBy('dateKey', 'asc')
-  );
-  const snap = await getDocs(q);
-  const set = new Set();
-  snap.docs.forEach((d) => {
-    const k = d.data()?.dateKey;
-    if (k) set.add(k);
-  });
-  return set;
-}
+export { fetchMemorableMomentDateKeys };
 
 async function dayHasTrackedData(uid, dateKey) {
   return dayHasMeaningfulProgress(uid, dateKey);
