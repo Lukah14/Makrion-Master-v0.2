@@ -219,9 +219,14 @@ export default function OnboardingWizard() {
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
+  const [stepError, setStepError] = useState('');
   const [leavingToLogin, setLeavingToLogin] = useState(false);
   /** True after step-0 back requests sign-out; drives stuck-route fallback if gate does not replace. */
   const expectLogoutNavRef = useRef(false);
+  /** Re-entrancy guard — prevents duplicate Firestore writes from rapid double-taps. */
+  const submittingRef = useRef(false);
+  /** Scrollable body container — used to scroll to top on validation errors. */
+  const scrollRef = useRef(null);
 
   const [mainGoal, setMainGoal] = useState(MAIN_GOAL.LOSE_WEIGHT);
   const [sex, setSex] = useState(SEX.MALE);
@@ -390,7 +395,10 @@ export default function OnboardingWizard() {
     [macroKcal, mainGoal, currentWeightKg, updateDraft],
   );
 
-  const goNext = () => setStep((s) => Math.min(STEPS - 1, s + 1));
+  /** Clear inline step error whenever the user moves between steps. */
+  useEffect(() => {
+    setStepError('');
+  }, [step]);
 
   /** Step &gt; 0: previous step. Step 0: sign out — NavigationGate replaces to login (avoids duplicate replace + Firestore watch races). */
   const handleBack = useCallback(async () => {
@@ -462,8 +470,100 @@ export default function OnboardingWizard() {
     }, [handleBack, saving, leavingToLogin]),
   );
 
+  /**
+   * Validate only the fields required by the current step.
+   * Returns '' when the step is valid; otherwise a user-friendly error message.
+   */
+  const validateStep = useCallback(
+    (s) => {
+      if (s === 0) {
+        if (
+          mainGoal !== MAIN_GOAL.LOSE_WEIGHT &&
+          mainGoal !== MAIN_GOAL.MAINTAIN_WEIGHT &&
+          mainGoal !== MAIN_GOAL.BUILD_MUSCLE
+        ) {
+          return 'Please pick a main goal to continue.';
+        }
+        return '';
+      }
+      if (s === 1) {
+        if (sex !== SEX.MALE && sex !== SEX.FEMALE) {
+          return 'Please select your biological sex.';
+        }
+        return '';
+      }
+      if (s === 2) {
+        const n = Number(age);
+        if (!Number.isFinite(n) || n < 14 || n > 100) {
+          return 'Please enter an age between 14 and 100.';
+        }
+        return '';
+      }
+      if (s === 3) {
+        const n = Number(heightCm);
+        if (!Number.isFinite(n) || n < 120 || n > 220) {
+          return 'Please set a height between 120 cm and 220 cm.';
+        }
+        return '';
+      }
+      if (s === 4) {
+        const n = Number(currentWeightKg);
+        if (!Number.isFinite(n) || n < 30 || n > 300) {
+          return 'Please set a valid current weight.';
+        }
+        return '';
+      }
+      if (s === 5) {
+        const n = Number(targetWeightKg);
+        if (!Number.isFinite(n) || n < 30 || n > 300) {
+          return 'Please set a valid target weight.';
+        }
+        return '';
+      }
+      if (s === 6) {
+        const allowed = Object.values(ACTIVITY_LEVEL);
+        if (!allowed.includes(activityLevel)) {
+          return 'Please choose an activity level.';
+        }
+        return '';
+      }
+      if (s === STEPS - 1) {
+        if (
+          !Number.isFinite(Number(draft.proteinG)) ||
+          !Number.isFinite(Number(draft.carbsG)) ||
+          !Number.isFinite(Number(draft.fatG)) ||
+          draft.proteinG <= 0 ||
+          draft.fatG <= 0 ||
+          draft.carbsG < 0
+        ) {
+          return 'Macros look invalid. Adjust your plan before saving.';
+        }
+        const kcal = kcalFromMacros(draft.proteinG, draft.carbsG, draft.fatG);
+        if (!Number.isFinite(kcal) || kcal < KCAL_MIN || kcal > KCAL_MAX) {
+          return `Calories must be between ${KCAL_MIN} and ${KCAL_MAX} kcal.`;
+        }
+        return '';
+      }
+      return '';
+    },
+    [mainGoal, sex, age, heightCm, currentWeightKg, targetWeightKg, activityLevel, draft],
+  );
+
+  /** Scroll body to top so the inline error is visible on screen. */
+  const scrollBodyToTop = useCallback(() => {
+    try {
+      scrollRef.current?.scrollTo?.({ y: 0, animated: true });
+    } catch {
+      // no-op: non-scrollable steps render a View wrapper.
+    }
+  }, []);
+
   const finish = async () => {
     onboardingFlowLog('submit started: finish()');
+    if (submittingRef.current) {
+      onboardingFlowLog('submit aborted: re-entrant tap while save in flight');
+      return;
+    }
     if (!user?.uid || saving) {
       onboardingFlowLog('submit aborted: no uid or already saving', {
         hasUid: !!user?.uid,
@@ -487,7 +587,25 @@ export default function OnboardingWizard() {
       return;
     }
 
+    /** Full-payload validation before hitting Firestore. */
+    const fullPayloadError =
+      validateStep(0) ||
+      validateStep(1) ||
+      validateStep(2) ||
+      validateStep(3) ||
+      validateStep(4) ||
+      validateStep(5) ||
+      validateStep(6) ||
+      validateStep(STEPS - 1);
+    if (fullPayloadError) {
+      onboardingFlowLog('submit aborted: final validation failed', fullPayloadError);
+      setSaveError(fullPayloadError);
+      return;
+    }
+
+    submittingRef.current = true;
     setSaveError('');
+    setStepError('');
     flowLog('LOADING_SET_TRUE', { scope: 'onboarding_save_button' });
     setSaving(true);
     onboardingFlowLog('auth ok, write starting', { uid: user.uid });
@@ -541,6 +659,7 @@ export default function OnboardingWizard() {
       setSaveError(msg || 'Could not save your profile.');
       flowLog('LOADING_SET_FALSE', { scope: 'onboarding_save_button', reason: 'save_error' });
       setSaving(false);
+      submittingRef.current = false;
       return;
     }
 
@@ -577,8 +696,39 @@ export default function OnboardingWizard() {
     } finally {
       flowLog('LOADING_SET_FALSE', { scope: 'onboarding_save_button', reason: 'finish_finally' });
       setSaving(false);
+      submittingRef.current = false;
     }
   };
+
+  /**
+   * Single entry-point for the footer button across every step.
+   * - Validates the current step first and shows an inline error when invalid.
+   * - On all steps except the last, advances to the next step.
+   * - On the last step, awaits Firestore save before navigating to the dashboard.
+   * Relies on `submittingRef` + `saving` to block double-taps and duplicate writes.
+   */
+  const handleContinue = useCallback(() => {
+    if (saving || submittingRef.current || leavingToLogin) return;
+
+    const err = validateStep(step);
+    if (err) {
+      setStepError(err);
+      scrollBodyToTop();
+      return;
+    }
+    setStepError('');
+
+    if (step < STEPS - 1) {
+      flowLog('ONBOARDING_STEP_NEXT', { from: step, to: step + 1 });
+      setStep((s) => Math.min(STEPS - 1, s + 1));
+      return;
+    }
+
+    flowLog('SAVE_AND_CONTINUE_PRESSED', 'handleContinue');
+    onboardingFlowLog('button pressed: Save & continue (handleContinue)');
+    onboardingLog('handleContinue → finish()');
+    void finish();
+  }, [saving, leavingToLogin, step, validateStep, scrollBodyToTop, finish]);
 
   const renderRadioCard = (selected, onSelect, children) => (
     <TouchableOpacity
@@ -1007,6 +1157,7 @@ export default function OnboardingWizard() {
 
       {useScrollForStep(step) ? (
         <ScrollView
+          ref={scrollRef}
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
@@ -1021,33 +1172,43 @@ export default function OnboardingWizard() {
       )}
 
       <View style={styles.footer}>
-        {step < STEPS - 1 ? (
-          <TouchableOpacity style={styles.primaryBtn} onPress={goNext} activeOpacity={0.85}>
-            <Text style={styles.primaryBtnText}>Continue</Text>
-          </TouchableOpacity>
-        ) : (
-          <TouchableOpacity
-            style={[styles.primaryBtn, saving && styles.primaryBtnSaving]}
-            onPress={() => {
-              flowLog('SAVE_AND_CONTINUE_PRESSED', 'button');
-              onboardingFlowLog('button pressed: Save & continue');
-              onboardingLog('Save & continue button onPress');
-              void finish();
-            }}
-            disabled={saving}
-            activeOpacity={0.85}
-          >
-            <View style={styles.primaryBtnInner}>
-              {saving ? (
-                <ActivityIndicator
-                  color={Colors.onPrimary}
-                  style={styles.primaryBtnSpinner}
-                />
-              ) : null}
-              <Text style={styles.primaryBtnText}>{'Save & Continue'}</Text>
-            </View>
-          </TouchableOpacity>
-        )}
+        {stepError ? (
+          <Text style={styles.err} accessibilityLiveRegion="polite">
+            {stepError}
+          </Text>
+        ) : null}
+        {(() => {
+          const isLast = step === STEPS - 1;
+          const disabled = saving || leavingToLogin;
+          const label = isLast ? (saving ? 'Saving...' : 'Save & Continue') : 'Continue';
+          return (
+            <TouchableOpacity
+              style={[styles.primaryBtn, saving && styles.primaryBtnSaving, disabled && !saving && styles.primaryBtnDisabled]}
+              onPress={handleContinue}
+              disabled={disabled}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityState={{ disabled, busy: saving }}
+              accessibilityLabel={label}
+            >
+              <View style={styles.primaryBtnInner}>
+                {saving ? (
+                  <ActivityIndicator
+                    color={Colors.onPrimary}
+                    style={styles.primaryBtnSpinner}
+                  />
+                ) : null}
+                <Text
+                  style={styles.primaryBtnText}
+                  numberOfLines={1}
+                  allowFontScaling={false}
+                >
+                  {label}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          );
+        })()}
       </View>
     </SafeAreaView>
   );
@@ -1448,7 +1609,7 @@ const createStyles = (Colors) =>
       borderRadius: 16,
       paddingVertical: 16,
       paddingHorizontal: 20,
-      alignItems: 'center',
+      alignItems: 'stretch',
       justifyContent: 'center',
       minHeight: 56,
     },
@@ -1458,10 +1619,14 @@ const createStyles = (Colors) =>
       borderWidth: 2,
       borderColor: Colors.onPrimary + '55',
     },
+    primaryBtnDisabled: {
+      opacity: 0.5,
+    },
     primaryBtnInner: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
+      flex: 1,
     },
     primaryBtnSpinner: { marginRight: 10 },
     primaryBtnText: {

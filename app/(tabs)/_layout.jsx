@@ -1,5 +1,6 @@
 import { Tabs } from 'expo-router';
 import { View, Image, StyleSheet, Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { House } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import { NutritionDateProvider } from '@/context/NutritionDateContext';
@@ -22,6 +23,17 @@ function NavIcon({ source, color, size }) {
 
 export default function TabLayout() {
   const { colors, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
+
+  /**
+   * Edge-to-edge (Android 15 / `edgeToEdgeEnabled: true`) draws content behind the system
+   * navigation bar. We must add the real bottom inset so tab icons sit above it, not under it.
+   * iOS already handles this via the home indicator inset (typically 34pt).
+   */
+  const bottomInset = insets.bottom;
+  const TAB_CONTENT_HEIGHT = 52; // fixed icon+label area
+  const tabBarHeight = TAB_CONTENT_HEIGHT + bottomInset;
+  const tabBarPaddingBottom = Platform.OS === 'ios' ? Math.max(bottomInset, 16) : bottomInset + 6;
 
   return (
     <NutritionDateProvider>
@@ -35,8 +47,8 @@ export default function TabLayout() {
         tabBarStyle: {
           backgroundColor: colors.tabBarBackground,
           borderTopWidth: 0,
-          height: Platform.OS === 'ios' ? 88 : 68,
-          paddingBottom: Platform.OS === 'ios' ? 28 : 8,
+          height: tabBarHeight,
+          paddingBottom: tabBarPaddingBottom,
           paddingTop: 8,
           shadowColor: colors.shadowColor,
           shadowOffset: { width: 0, height: -4 },

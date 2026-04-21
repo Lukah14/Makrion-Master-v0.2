@@ -270,3 +270,41 @@ export function subscribeWaterLog(uid, dateKey, onNext, onError) {
     }
   };
 }
+
+/**
+ * Force-tear-down every water listener bucket synchronously, bypassing the grace-period destroy.
+ * MUST be called before Firebase `signOut(auth)` fires — the grace-period destroy is only safe
+ * within one auth session. A physical `onSnapshot` left alive across a logout can deliver a stale
+ * target-change from the dying session and hard-assert Firestore's TargetState (ca9), poisoning
+ * the async queue.
+ */
+export function evictAllWaterBuckets(reason = 'auth_session_change') {
+  if (waterBuckets.size === 0) return;
+  if (__DEV__) {
+    console.log('[water] evicting all listener buckets', {
+      count: waterBuckets.size,
+      reason,
+    });
+  }
+  for (const [key, bucket] of waterBuckets) {
+    try {
+      if (bucket.pendingDestroyTimer != null) {
+        clearTimeout(bucket.pendingDestroyTimer);
+        bucket.pendingDestroyTimer = null;
+      }
+      bucket.destroyed = true;
+      bucket.listeners.clear();
+      try {
+        bucket.unsub?.();
+      } catch {
+        /* ignore */
+      }
+      bucket.unsub = null;
+    } catch (e) {
+      if (__DEV__) {
+        console.warn('[water] eviction error for', key, e?.message || e);
+      }
+    }
+  }
+  waterBuckets.clear();
+}

@@ -415,3 +415,35 @@ export function subscribeActivityEntries(uid, dateKey, onNext, onError) {
     }
   };
 }
+
+/** See `evictAllWaterBuckets` — same crash class (Firestore ca9 on logout/login). */
+export function evictAllActivityBuckets(reason = 'auth_session_change') {
+  if (activityBuckets.size === 0) return;
+  if (__DEV__) {
+    console.log('[activity] evicting all listener buckets', {
+      count: activityBuckets.size,
+      reason,
+    });
+  }
+  for (const [key, bucket] of activityBuckets) {
+    try {
+      if (bucket.pendingDestroyTimer != null) {
+        clearTimeout(bucket.pendingDestroyTimer);
+        bucket.pendingDestroyTimer = null;
+      }
+      bucket.destroyed = true;
+      bucket.listeners.clear();
+      try {
+        bucket.unsub?.();
+      } catch {
+        /* ignore */
+      }
+      bucket.unsub = null;
+    } catch (e) {
+      if (__DEV__) {
+        console.warn('[activity] eviction error for', key, e?.message || e);
+      }
+    }
+  }
+  activityBuckets.clear();
+}

@@ -48,6 +48,7 @@ function NavigationGate({ fontsReady }) {
     complete,
     retry,
     profileResolved,
+    profileExists,
   } = useUserHealthProfile();
   const { savedThisSession, gateRevision, saveSucceededRef, clearSavedFlag } = useOnboardingNav();
   const segments = useSegments();
@@ -59,6 +60,7 @@ function NavigationGate({ fontsReady }) {
   const [gateFailsafe, setGateFailsafe] = useState(false);
   const [absoluteBootstrapDone, setAbsoluteBootstrapDone] = useState(false);
   const prevBootingRef = useRef(null);
+  const lastDecisionLogRef = useRef({ target: null, reason: null });
 
   /** Same `router.replace(href)` twice in one commit cycle (e.g. auth + profile hook update) crashes Expo Router. */
   const lastGateReplaceRef = useRef({ href: null, at: 0 });
@@ -93,17 +95,32 @@ function NavigationGate({ fontsReady }) {
 
   const effectiveComplete = complete || savedThisSession || saveSucceededRef.current;
   /**
-   * A–H bootstrap: wait for auth when signed out; when signed in wait for profile resolution
-   * (first snapshot, error, or profile failsafe) unless onboarding already signalled complete this session.
-   * `authLoading` must not block once `user` is set.
+   * A signed-in user's profile state is "known" only when we have a reliable signal:
+   *  - `profileExists === true` and `userData` arrived (effectiveComplete or not), OR
+   *  - `profileExists === false` confirmed by a real getDoc / snapshot (new signup), OR
+   *  - `effectiveComplete` already true (the user just finished onboarding; trust the latch).
+   *
+   * `profileExists === null` means either the read is still pending OR a fabricated/unreliable
+   * fallback returned `exists:false`. Treating `null` as "not resolved yet" prevents the
+   * onboarding-flicker bug: when the Firestore queue is wedged, getDoc returns an unreliable
+   * `exists:false`; we must keep the splash up and wait for the live snapshot instead of routing
+   * an existing user to `/(onboarding)` for a few hundred ms.
    */
+  const profileKnown = profileExists !== null || effectiveComplete;
   /**
-   * Do not tie booting to `gateFailsafe`: that timer used to unblock at 6s while UserProfileProvider
-   * was still running getDoc retries after listener Target-ID failures — causing a false onboarding redirect.
+   * A–H bootstrap: wait for auth when signed out; when signed in wait until the profile state is
+   * actually known (or until `effectiveComplete` latches). `authLoading` must not block once
+   * `user` is set. `gateFailsafe`/`absoluteBootstrapDone` are the final escape hatches.
    */
   const booting =
     !absoluteBootstrapDone &&
-    ((!user && authLoading) || (!!user && !effectiveComplete && !profileResolved));
+    ((!user && authLoading) || (!!user && !effectiveComplete && !profileKnown));
+
+  /**
+   * `initialRouteResolved` – exposed for clarity per spec. True once the gate has enough info
+   * to pick a route. Drives the splash/loading gate together with `booting`.
+   */
+  const initialRouteResolved = !booting;
 
   useEffect(() => {
     if (prevBootingRef.current !== booting) {
@@ -113,10 +130,31 @@ function NavigationGate({ fontsReady }) {
         hasUser: !!user,
         effectiveComplete,
         profileResolved,
+        profileExists,
       });
+      if (__DEV__) {
+        console.log('[GATE:booting]', {
+          booting,
+          initialRouteResolved: !booting,
+          hasUser: !!user,
+          authInitializing: authLoading,
+          profileLoading,
+          profileResolved,
+          profileExists,
+          effectiveComplete,
+        });
+      }
       prevBootingRef.current = booting;
     }
-  }, [booting, user, effectiveComplete, profileResolved]);
+  }, [
+    booting,
+    user,
+    effectiveComplete,
+    profileResolved,
+    profileExists,
+    authLoading,
+    profileLoading,
+  ]);
 
   useEffect(() => {
     if (!fontsReady) return;
@@ -125,12 +163,14 @@ function NavigationGate({ fontsReady }) {
       authLoading,
       profileLoading,
       profileResolved,
+      profileExists,
       profileError: profileError || null,
       complete,
       savedThisSession,
       pendingSave: saveSucceededRef.current,
       effectiveComplete,
       booting,
+      initialRouteResolved,
       gateFailsafe,
       absoluteBootstrapDone,
     });
@@ -140,11 +180,13 @@ function NavigationGate({ fontsReady }) {
     authLoading,
     profileLoading,
     profileResolved,
+    profileExists,
     profileError,
     complete,
     savedThisSession,
     effectiveComplete,
     booting,
+    initialRouteResolved,
     gateFailsafe,
     absoluteBootstrapDone,
     gateRevision,
@@ -188,7 +230,35 @@ function NavigationGate({ fontsReady }) {
     let cancelled = false;
     let removeNavListener = null;
 
-    const gateReplace = (href) => {
+    const logFinalDecision = (href, reason) => {
+      if (!__DEV__) return;
+      const target =
+        href === DASHBOARD_HREF
+          ? 'Dashboard'
+          : href === '/(onboarding)'
+            ? 'Onboarding'
+            : String(href).includes('login')
+              ? 'Auth'
+              : String(href);
+      const prev = lastDecisionLogRef.current;
+      if (prev.target === target && prev.reason === reason) return;
+      lastDecisionLogRef.current = { target, reason };
+      console.log('[GATE:route_decision]', {
+        target,
+        href,
+        reason,
+        uid: user?.uid ? `${user.uid.slice(0, 8)}…` : null,
+        authInitializing: authLoading,
+        profileLoading,
+        profileResolved,
+        profileExists,
+        onboardingCompleted: complete,
+        effectiveComplete,
+        initialRouteResolved,
+      });
+    };
+
+    const gateReplace = (href, reason = 'gate_decision') => {
       const now = Date.now();
       const prev = lastGateReplaceRef.current;
       if (prev.href === href && now - prev.at < 1200) {
@@ -204,6 +274,7 @@ function NavigationGate({ fontsReady }) {
         flowLog('NAVIGATE_ONBOARDING');
         flowLog('ONBOARDING_ROUTE', { href });
       } else if (String(href).includes('login')) flowLog('NAVIGATE_LOGIN', { href });
+      logFinalDecision(href, reason);
       router.replace(href);
     };
 
@@ -291,7 +362,7 @@ function NavigationGate({ fontsReady }) {
         bootLog('navigating to login', 'no auth user');
         onboardingFlowLog('guard: redirect → login');
         onboardingLog('redirect → login');
-        gateReplace('/(auth)/login');
+        gateReplace('/(auth)/login', 'no_auth_user');
       }
       bootLog('loading finished', 'unauthenticated');
       return;
@@ -329,7 +400,7 @@ function NavigationGate({ fontsReady }) {
         savedThisSession,
         pendingRef: pendingSave,
       });
-      gateReplace(DASHBOARD_HREF);
+      gateReplace(DASHBOARD_HREF, 'onboarding→dashboard (complete)');
       return;
     }
 
@@ -339,13 +410,13 @@ function NavigationGate({ fontsReady }) {
         bootLog('navigating to onboarding', 'signed in — profile missing or incomplete');
         onboardingFlowLog('guard: redirect auth → onboarding');
         onboardingLog('redirect auth → onboarding');
-        gateReplace('/(onboarding)');
+        gateReplace('/(onboarding)', 'auth→onboarding (no completed profile)');
       } else {
         flowLog('NAVIGATE_DASHBOARD', { from: 'auth', href: DASHBOARD_HREF });
         bootLog('navigating to dashboard', 'signed in — profile complete');
         onboardingFlowLog('guard: redirect auth → dashboard');
         onboardingLog('redirect auth → dashboard');
-        gateReplace(DASHBOARD_HREF);
+        gateReplace(DASHBOARD_HREF, 'auth→dashboard (profile complete)');
       }
       bootLog('loading finished', 'auth stack');
       return;
@@ -356,7 +427,7 @@ function NavigationGate({ fontsReady }) {
       bootLog('navigating to onboarding', 'incomplete profile — was on tabs');
       onboardingFlowLog('guard: redirect tabs → onboarding (incomplete profile)');
       onboardingLog('redirect tabs → onboarding (incomplete)');
-      gateReplace('/(onboarding)');
+      gateReplace('/(onboarding)', 'tabs→onboarding (incomplete)');
       return;
     }
 
@@ -364,7 +435,7 @@ function NavigationGate({ fontsReady }) {
       flowLog('REDIRECT_ONBOARDING', { from: 'settings', reason: 'incomplete_profile' });
       bootLog('navigating to onboarding', 'incomplete profile — was on settings');
       onboardingFlowLog('guard: redirect settings → onboarding (incomplete profile)');
-      gateReplace('/(onboarding)');
+      gateReplace('/(onboarding)', 'settings→onboarding (incomplete)');
       return;
     }
 
@@ -373,14 +444,14 @@ function NavigationGate({ fontsReady }) {
       flowLog('REDIRECT_ONBOARDING', { from: 'ambiguous', reason: 'incomplete' });
       bootLog('navigating to onboarding', 'ambiguous route — incomplete', { path, segments: seg });
       onboardingFlowLog('guard: ambiguous route → onboarding (incomplete)');
-      gateReplace('/(onboarding)');
+      gateReplace('/(onboarding)', 'ambiguous→onboarding (incomplete)');
       return;
     }
     if (user && effective && !inKnownArea) {
       flowLog('NAVIGATE_DASHBOARD', { from: 'ambiguous', href: DASHBOARD_HREF });
       bootLog('navigating to dashboard', 'ambiguous route — complete', { path, segments: seg });
       onboardingFlowLog('guard: ambiguous route → dashboard (complete)');
-      gateReplace(DASHBOARD_HREF);
+      gateReplace(DASHBOARD_HREF, 'ambiguous→dashboard (complete)');
       return;
     }
 
@@ -419,9 +490,12 @@ function NavigationGate({ fontsReady }) {
   }, [
     fontsReady,
     user,
+    authLoading,
     booting,
+    initialRouteResolved,
     profileError,
     complete,
+    effectiveComplete,
     savedThisSession,
     gateRevision,
     segments,
@@ -433,6 +507,7 @@ function NavigationGate({ fontsReady }) {
     gateFailsafe,
     absoluteBootstrapDone,
     profileResolved,
+    profileExists,
   ]);
 
   const showProfileErrorScreen =

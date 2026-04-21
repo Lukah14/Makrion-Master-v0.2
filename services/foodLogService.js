@@ -280,6 +280,38 @@ export function subscribeFoodLogEntries(uid, date, onNext, onError) {
   };
 }
 
+/** See `evictAllWaterBuckets` — same crash class (Firestore ca9 on logout/login). */
+export function evictAllFoodLogBuckets(reason = 'auth_session_change') {
+  if (foodLogBuckets.size === 0) return;
+  if (__DEV__) {
+    console.log('[foodLog] evicting all listener buckets', {
+      count: foodLogBuckets.size,
+      reason,
+    });
+  }
+  for (const [key, bucket] of foodLogBuckets) {
+    try {
+      if (bucket.pendingDestroyTimer != null) {
+        clearTimeout(bucket.pendingDestroyTimer);
+        bucket.pendingDestroyTimer = null;
+      }
+      bucket.destroyed = true;
+      bucket.listeners.clear();
+      try {
+        bucket.unsub?.();
+      } catch {
+        /* ignore */
+      }
+      bucket.unsub = null;
+    } catch (e) {
+      if (__DEV__) {
+        console.warn('[foodLog] eviction error for', key, e?.message || e);
+      }
+    }
+  }
+  foodLogBuckets.clear();
+}
+
 export async function updateFoodLogEntry(uid, date, entryId, changes) {
   const update = { ...changes, updatedAt: serverTimestamp() };
   const hasGramsAndPer100 =

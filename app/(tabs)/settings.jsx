@@ -10,7 +10,6 @@ import { Layout } from '@/constants/layout';
 import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/context/AuthContext';
 import { useUser } from '@/hooks/useUser';
-import { signOutUser } from '@/services/authService';
 import AppearanceSheet from '@/components/settings/AppearanceSheet';
 
 function SectionLabel({ label }) {
@@ -63,7 +62,7 @@ const APPEARANCE_LABELS = { light: 'Light', dark: 'Dark', system: 'System' };
 export default function SettingsScreen() {
   const router = useRouter();
   const { colors: Colors, preference: appearance, setPreference } = useTheme();
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
   const { userData, patchUser } = useUser();
   const styles = createStyles(Colors);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
@@ -84,16 +83,33 @@ export default function SettingsScreen() {
   };
 
   const handleLogout = () => {
-    Alert.alert('Log Out', 'Are you sure you want to log out?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Log Out',
-        style: 'destructive',
-        onPress: async () => {
-          try { await signOutUser(); } catch {}
-        },
-      },
-    ]);
+    const doSignOut = async () => {
+      try {
+        await signOut();
+      } catch {
+        /* AuthContext already logs failures; gate redirects when user === null */
+      } finally {
+        /**
+         * Hard-reset the navigation stack so protected screens (tabs, settings) cannot linger
+         * while the auth listener propagates. NavigationGate also calls router.replace when
+         * user === null, so this is belt-and-suspenders. On web, AuthContext.signOut() also
+         * calls window.location.reload(), so this replace is a no-op there.
+         */
+        try { router.replace('/(auth)/login'); } catch { /* ignore */ }
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      /** Alert.alert is a no-op on web — use the native browser confirm dialog instead. */
+      if (window.confirm('Are you sure you want to log out?')) {
+        void doSignOut();
+      }
+    } else {
+      Alert.alert('Log Out', 'Are you sure you want to log out?', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Log Out', style: 'destructive', onPress: doSignOut },
+      ]);
+    }
   };
 
   const handleAppearancePick = async (key) => {

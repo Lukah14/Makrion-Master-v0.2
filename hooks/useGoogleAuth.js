@@ -34,8 +34,11 @@ export function useGoogleAuth() {
 
   const promptGoogleSignIn = useCallback(async () => {
     if (!webClientId) {
+      /** User-visible but actionable — the env var name is the only way a developer can fix this quickly. */
       setError(
-        'Google sign-in is not configured. Add EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID to .env and rebuild.',
+        __DEV__
+          ? 'Google sign-in not configured. Set EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID in .env (Firebase Console → Authentication → Sign-in method → Google → Web SDK configuration) and restart with `npx expo start -c`.'
+          : 'Google sign-in is temporarily unavailable. Please try again later or use email sign-in.',
       );
       return;
     }
@@ -92,7 +95,13 @@ export function useGoogleAuth() {
       console.log('[GOOGLE_ID_TOKEN_EXISTS]', Boolean(idToken));
 
       if (!idToken) {
-        throw new Error('No ID token from Google Sign-In. Check Web client ID in Firebase Console.');
+        setError(
+          __DEV__
+            ? 'No ID token returned by Google Sign-In. Verify your Web client ID and that Google is enabled in Firebase Console → Authentication.'
+            : 'Could not complete Google sign-in. Please try again.',
+        );
+        console.log('[FIREBASE_SIGNIN_FAILED]', 'no_id_token');
+        return;
       }
 
       const credential = GoogleAuthProvider.credential(idToken);
@@ -126,10 +135,19 @@ export function useGoogleAuth() {
         setError('An account already exists with this email using a different sign-in method.');
       } else if (err?.code === 'auth/network-request-failed') {
         setError('Network error. Check your internet connection and try again.');
-      } else if (err?.code === 'auth/popup-closed-by-user') {
-        /* web cancel */
+      } else if (err?.code === 'auth/popup-closed-by-user' || err?.code === 'auth/cancelled-popup-request') {
+        /* web cancel — silent */
+      } else if (err?.code === 'auth/invalid-credential') {
+        setError('Google credentials were rejected. Try signing in again.');
+      } else if (err?.code === 'auth/user-disabled') {
+        setError('This account has been disabled. Contact support.');
       } else {
-        setError(err?.message || 'Something went wrong with Google sign-in.');
+        /** Do not leak raw Firebase / RN stack traces to users. */
+        setError(
+          __DEV__
+            ? err?.message || 'Something went wrong with Google sign-in.'
+            : 'Could not sign in with Google. Please try again.',
+        );
       }
     } finally {
       setLoading(false);

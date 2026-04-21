@@ -20,7 +20,8 @@
         "EXPO_PUBLIC_FIREBASE_APP_ID": "1:948141985962:web:0691a8673a4a83b59780d3",
         "EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID": "G-17HW78W442",
         "EAS_BUILD_NO_EXPO_GO_WARNING": "true"
-      }
+      },
+      "channel": "development"
     },
     "preview": {
       "distribution": "internal",
@@ -57,12 +58,12 @@
       }
     }
   },
-      "submit": {
-          "production": {
-            "android": {
-              "track": "internal",
-              "releaseStatus": "draft"
-            }
-          }
-        }
+  "submit": {
+    "production": {
+      "android": {
+        "track": "internal",
+        "releaseStatus": "draft"
       }
+    }
+  }
+}

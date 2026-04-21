@@ -112,6 +112,7 @@ export async function createUserDocument(firebaseUser, extra = {}) {
     email: firebaseUser.email,
     displayName: extra.displayName || firebaseUser.displayName || '',
     photoURL: firebaseUser.photoURL || '',
+    provider: extra.provider || 'password',
     role: 'user',
     onboardingCompleted: false,
     profileCompleted: false,
