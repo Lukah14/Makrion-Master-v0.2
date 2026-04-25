@@ -8,6 +8,7 @@ import {
   myFoodToSearchModel,
   subscribeMyFoods,
   listMyFoods,
+  getFoodCanonicalKey,
 } from '@/services/foodService';
 
 export function useMyFoods() {
@@ -92,10 +93,29 @@ export function useMyFoods() {
     }
   }, [user]);
 
-  const searchModels = useMemo(() => foods.map(myFoodToSearchModel), [foods]);
+  const deduplicatedFoods = useMemo(() => {
+    const seen = new Map();
+    for (const food of foods) {
+      const key = food.canonicalKey || getFoodCanonicalKey({ ...food, source: 'user' });
+      if (!seen.has(key)) {
+        seen.set(key, food);
+      } else {
+        const existing = seen.get(key);
+        const existingTime = existing.updatedAt?.toMillis?.() ?? existing.createdAt?.toMillis?.() ?? 0;
+        const foodTime = food.updatedAt?.toMillis?.() ?? food.createdAt?.toMillis?.() ?? 0;
+        if (foodTime > existingTime) seen.set(key, food);
+      }
+    }
+    return Array.from(seen.values());
+  }, [foods]);
+
+  const searchModels = useMemo(
+    () => deduplicatedFoods.map(myFoodToSearchModel),
+    [deduplicatedFoods]
+  );
 
   return {
-    foods,
+    foods: deduplicatedFoods,
     searchModels,
     loading,
     error,

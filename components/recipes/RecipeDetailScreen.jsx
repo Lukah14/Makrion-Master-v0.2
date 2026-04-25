@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import {
   ArrowLeft, Bookmark, Plus, Clock, Users,
-  Flame, Trash2,
+  Flame, Trash2, Pencil,
 } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/context/AuthContext';
@@ -243,7 +243,7 @@ function NutritionTab({ recipe }) {
   );
 }
 
-export default function RecipeDetailScreen({ recipe, onBack, loadingDetail, onDeleteRecipe }) {
+export default function RecipeDetailScreen({ recipe, onBack, loadingDetail, onDeleteRecipe, onEdit }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
   const { user } = useAuth();
@@ -330,6 +330,11 @@ export default function RecipeDetailScreen({ recipe, onBack, loadingDetail, onDe
               <ArrowLeft size={20} color="#FFFFFF" strokeWidth={2.5} />
             </TouchableOpacity>
             <View style={styles.topActionsRight}>
+              {onEdit ? (
+                <TouchableOpacity style={styles.actionBtn} onPress={onEdit} activeOpacity={0.8}>
+                  <Pencil size={20} color="#FFFFFF" strokeWidth={2.2} />
+                </TouchableOpacity>
+              ) : null}
               {onDeleteRecipe ? (
                 <TouchableOpacity
                   style={styles.actionBtn}
@@ -408,16 +413,6 @@ export default function RecipeDetailScreen({ recipe, onBack, loadingDetail, onDe
           {detailTab === 'Instructions' && <InstructionsTab recipe={recipe} loadingDetail={loadingDetail} />}
           {detailTab === 'Nutrition' && <NutritionTab recipe={recipe} />}
 
-          <View style={styles.planRow}>
-            <TouchableOpacity style={styles.planBtn} activeOpacity={0.8}>
-              <Bookmark size={16} color={Colors.textSecondary} />
-              <Text style={styles.planBtnText}>Save</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.planBtn} activeOpacity={0.8}>
-              <Clock size={16} color={Colors.textSecondary} />
-              <Text style={styles.planBtnText}>Plan</Text>
-            </TouchableOpacity>
-          </View>
         </View>
 
         <View style={{ height: 40 }} />
@@ -778,28 +773,6 @@ const createStyles = (Colors) => StyleSheet.create({
     fontSize: 18,
     fontFamily: 'PlusJakartaSans-SemiBold',
     marginLeft: 2,
-  },
-  planRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 20,
-  },
-  planBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 14,
-    borderRadius: 16,
-    borderWidth: 1.5,
-    borderColor: Colors.border,
-    backgroundColor: Colors.cardBackground,
-  },
-  planBtnText: {
-    fontSize: 14,
-    fontFamily: 'PlusJakartaSans-SemiBold',
-    color: Colors.textSecondary,
   },
   toast: {
     position: 'absolute',

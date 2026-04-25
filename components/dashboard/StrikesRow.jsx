@@ -27,12 +27,17 @@ function StrikePill({ icon: Icon, value, onPress }) {
 }
 
 /**
- * Three pills mirror the same shared `currentStreak` (single source of truth from
- * `useDomainStreaksContext`). The icons remain Nutrition / Activity / H. Tracker
- * because tapping each routes to that tab, but the displayed number is unified.
+ * Three pills showing independent per-domain current streaks.
+ *
+ * Each pill shows the streak for its own module:
+ *   🍎 Nutrition  → currentNutritionStreak
+ *   💪 Activity   → currentActivityStreak
+ *   ✅ H.Tracker  → currentHabitTrackerStreak
  *
  * @param {{
- *   currentStreak: number,
+ *   currentNutritionStreak: number,
+ *   currentActivityStreak: number,
+ *   currentHabitTrackerStreak: number,
  *   loading?: boolean,
  *   error?: string|null,
  *   onPressNutrition?: () => void,
@@ -41,7 +46,9 @@ function StrikePill({ icon: Icon, value, onPress }) {
  * }} props
  */
 export default function StrikesRow({
-  currentStreak,
+  currentNutritionStreak = 0,
+  currentActivityStreak = 0,
+  currentHabitTrackerStreak = 0,
   loading,
   error,
   onPressNutrition,
@@ -72,9 +79,21 @@ export default function StrikesRow({
   return (
     <View style={s.wrap}>
       <View style={s.row}>
-        <StrikePill icon={Apple} value={currentStreak} onPress={onPressNutrition} />
-        <StrikePill icon={Dumbbell} value={currentStreak} onPress={onPressActivity} />
-        <StrikePill icon={ListChecks} value={currentStreak} onPress={onPressHabitTracker} />
+        <StrikePill
+          icon={Apple}
+          value={currentNutritionStreak}
+          onPress={onPressNutrition}
+        />
+        <StrikePill
+          icon={Dumbbell}
+          value={currentActivityStreak}
+          onPress={onPressActivity}
+        />
+        <StrikePill
+          icon={ListChecks}
+          value={currentHabitTrackerStreak}
+          onPress={onPressHabitTracker}
+        />
       </View>
     </View>
   );

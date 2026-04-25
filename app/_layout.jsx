@@ -2,6 +2,7 @@ import 'react-native-gesture-handler';
 import React, { useEffect, useRef, useState } from 'react';
 import '@/lib/firebase';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import BootErrorBoundary from '@/components/common/BootErrorBoundary';
 
 if (__DEV__) {
@@ -665,11 +666,13 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <BootErrorBoundary>
-        <ThemeProvider>
-          <RootContent fontsReady={fontsReady} />
-        </ThemeProvider>
-      </BootErrorBoundary>
+      <SafeAreaProvider>
+        <BootErrorBoundary>
+          <ThemeProvider>
+            <RootContent fontsReady={fontsReady} />
+          </ThemeProvider>
+        </BootErrorBoundary>
+      </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }

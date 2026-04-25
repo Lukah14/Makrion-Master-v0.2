@@ -8,6 +8,7 @@ import { useAuth } from '@/context/AuthContext';
 import CalendarModal from '@/components/calendar/CalendarModal';
 import SelectedDateBar from '@/components/calendar/SelectedDateBar';
 import { useUser } from '@/hooks/useUser';
+import { useTabBarLayout } from '@/hooks/useTabBarLayout';
 import { Layout } from '@/constants/layout';
 import WeightSummaryCard from '@/components/progress/WeightSummaryCard';
 import GoalPhaseCard from '@/components/progress/GoalPhaseCard';
@@ -40,7 +41,14 @@ function TabSelector({ activeTab, onTabChange }) {
           onPress={() => onTabChange(tab)}
           activeOpacity={0.7}
         >
-          <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>{tab}</Text>
+          <Text
+            style={[styles.tabText, activeTab === tab && styles.tabTextActive]}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.75}
+          >
+            {tab}
+          </Text>
         </TouchableOpacity>
       ))}
     </View>
@@ -211,6 +219,7 @@ function WeightView({ dateKey, bumpCalendarRefresh, weightSheet, setWeightSheet 
 export default function ProgressScreen() {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
+  const { scrollPaddingBottom, floatingBottom } = useTabBarLayout();
   const [activeTab, setActiveTab] = useState('Weight');
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [weightSheet, setWeightSheet] = useState({ open: false, editing: null });
@@ -228,7 +237,7 @@ export default function ProgressScreen() {
       <View style={styles.progressRoot}>
         <ScrollView
           style={styles.scroll}
-          contentContainerStyle={styles.content}
+          contentContainerStyle={[styles.content, { paddingBottom: scrollPaddingBottom }]}
           showsVerticalScrollIndicator={false}
         >
           <Text style={styles.screenTitle}>Progress</Text>
@@ -255,7 +264,7 @@ export default function ProgressScreen() {
         </ScrollView>
         {activeTab === 'Weight' && (
           <Pressable
-            style={styles.weightFab}
+            style={[styles.weightFab, { bottom: floatingBottom }]}
             onPress={() => setWeightSheet({ open: true, editing: null })}
             accessibilityRole="button"
             accessibilityLabel="Log weight"
@@ -273,11 +282,10 @@ const createStyles = (Colors) => StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: Colors.background },
   progressRoot: { flex: 1 },
   scroll: { flex: 1 },
-  content: { padding: Layout.screenPadding, paddingBottom: 100 },
+  content: { padding: Layout.screenPadding },
   weightFab: {
     position: 'absolute',
     right: Layout.screenPadding,
-    bottom: 96,
     width: 58,
     height: 58,
     borderRadius: 29,

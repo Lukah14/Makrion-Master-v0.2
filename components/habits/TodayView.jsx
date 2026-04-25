@@ -17,6 +17,7 @@ export default function TodayView({
   onTimerPause,
   onTimerStop,
   onTimerReset,
+  onTimerEditSave,
   onHabitLongPress,
   onAddHabit,
   runningTimers,
@@ -36,6 +37,7 @@ export default function TodayView({
         onTimerPause={onTimerPause}
         onTimerStop={onTimerStop}
         onTimerReset={onTimerReset}
+        onTimerEditSave={onTimerEditSave}
         onLongPress={onHabitLongPress}
         onAddHabit={onAddHabit}
         runningTimers={runningTimers}

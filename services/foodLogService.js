@@ -194,6 +194,7 @@ export function subscribeFoodLogEntries(uid, date, onNext, onError) {
       pendingDestroyTimer: null,
       uid,
       date,
+      lastList: undefined,
     };
     foodLogBuckets.set(k, bucket);
   }
@@ -205,6 +206,7 @@ export function subscribeFoodLogEntries(uid, date, onNext, onError) {
   bucket.listeners.set(id, { onNext, onError });
 
   const broadcast = (list) => {
+    bucket.lastList = list;
     for (const l of bucket.listeners.values()) {
       try {
         l.onNext(list);
@@ -263,6 +265,17 @@ export function subscribeFoodLogEntries(uid, date, onNext, onError) {
 
   if (bucket.listeners.size === 1 && !bucket.unsub) {
     attach();
+  } else if (bucket.unsub && bucket.lastList !== undefined) {
+    // Replay the last known snapshot to the late-joining subscriber so it
+    // doesn't stay stuck in loading=true on days with no entries.
+    try {
+      onNext(bucket.lastList);
+    } catch (e) {
+      if (__DEV__) {
+        // eslint-disable-next-line no-console
+        console.warn('[foodLog] late-subscriber replay error', e);
+      }
+    }
   }
 
   return () => {

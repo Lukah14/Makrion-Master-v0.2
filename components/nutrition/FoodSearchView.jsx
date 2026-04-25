@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import {
   Search, X, Plus,
-  Sparkles, FileText, SlidersHorizontal, UtensilsCrossed,
+  FileText, SlidersHorizontal, UtensilsCrossed,
 } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import {
@@ -204,7 +204,7 @@ function Toast({ visible, message, onUndo, onView }) {
   );
 }
 
-function SearchEmptyState({ query: q, onAI, onCreate }) {
+function SearchEmptyState({ onCreate }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
 
@@ -213,12 +213,8 @@ function SearchEmptyState({ query: q, onAI, onCreate }) {
       <Text style={styles.emptyIcon}>🔍</Text>
       <Text style={styles.emptyTitle}>No results found</Text>
       <Text style={styles.emptySubtitle}>
-        Try a different keyword, brand, or use AI search
+        Try a different keyword or brand name.
       </Text>
-      <TouchableOpacity style={styles.aiBtn} onPress={onAI} activeOpacity={0.85}>
-        <Sparkles size={16} color={Colors.textPrimary} />
-        <Text style={styles.aiBtnText}>Generate results using AI</Text>
-      </TouchableOpacity>
       <TouchableOpacity style={styles.createBtn} onPress={onCreate} activeOpacity={0.85}>
         <Text style={styles.createBtnText}>Create custom food</Text>
       </TouchableOpacity>
@@ -943,17 +939,8 @@ export default function FoodSearchView({
 
             {canShowFatSecretBlock && !hasResults && (
               <SearchEmptyState
-                query={debouncedQuery}
-                onAI={() => {}}
                 onCreate={() => setShowCreateForm(true)}
               />
-            )}
-
-            {isSearching && authStatus === 'authenticated' && !loading && (
-              <TouchableOpacity style={styles.aiFloatingBtn} activeOpacity={0.85}>
-                <Sparkles size={16} color={Colors.textPrimary} />
-                <Text style={styles.aiFloatingText}>Generate results using AI</Text>
-              </TouchableOpacity>
             )}
 
             <View style={{ height: 40 }} />
@@ -1264,29 +1251,6 @@ const createStyles = (Colors) => StyleSheet.create({
   quickActionTextActive: {
     color: Colors.onPrimary,
   },
-  aiFloatingBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: Colors.cardBackground,
-    borderRadius: 20,
-    paddingVertical: 16,
-    borderWidth: 1.5,
-    borderColor: Colors.border,
-    marginTop: 4,
-    marginBottom: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  aiFloatingText: {
-    fontSize: 15,
-    fontFamily: 'PlusJakartaSans-SemiBold',
-    color: Colors.textPrimary,
-  },
   emptyState: {
     alignItems: 'center',
     paddingVertical: 40,
@@ -1310,30 +1274,6 @@ const createStyles = (Colors) => StyleSheet.create({
     textAlign: 'center',
     lineHeight: 22,
     marginBottom: 28,
-  },
-  aiBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: Colors.cardBackground,
-    borderRadius: 16,
-    paddingVertical: 15,
-    paddingHorizontal: 24,
-    borderWidth: 1.5,
-    borderColor: Colors.border,
-    marginBottom: 12,
-    width: '100%',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  aiBtnText: {
-    fontSize: 15,
-    fontFamily: 'PlusJakartaSans-SemiBold',
-    color: Colors.textPrimary,
   },
   createBtn: {
     paddingVertical: 15,

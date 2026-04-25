@@ -381,7 +381,7 @@ export default function FoodDetailScreen({ food: initialFood, onBack, onAddToLog
     };
   }, [initialFood, selectedServing]);
 
-  const bookmarked = isFoodSaved(initialFood.id);
+  const bookmarked = isFoodSaved(initialFood);
 
   const handleBookmark = async () => {
     try {

@@ -105,6 +105,22 @@ export default function AddHabitWizard({ visible, onClose, onSave, editingHabit 
       }
       setTargetUnit(editingHabit.unit || '');
       setChecklistItems(editingHabit.checklistItems || []);
+      if (editingHabit.type === 'timer') {
+        let totalMin;
+        if (editingHabit.durationMinutes != null) {
+          totalMin = Math.round(Number(editingHabit.durationMinutes));
+        } else {
+          const t = Number(editingHabit.target) || 0;
+          const u = (editingHabit.unit || '').toLowerCase();
+          if (u.includes('hour') || u === 'h') totalMin = Math.round(t * 60);
+          else if (u.includes('sec')) totalMin = Math.round(t / 60);
+          else totalMin = Math.round(t);
+        }
+        totalMin = Math.max(0, totalMin || 0);
+        const h = Math.floor(totalMin / 60);
+        const m = totalMin % 60;
+        setTimerValue(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+      }
       const f = deriveFrequencyStateFromHabit(editingHabit);
       setRepeatRule(f.repeatRule);
       setRepeatDays(f.repeatDays);
@@ -186,6 +202,7 @@ export default function AddHabitWizard({ visible, onClose, onSave, editingHabit 
     const numericCondition =
       habitType === 'numeric' ? displayLabelToConditionType(condition) : 'at_least';
     let resolvedTarget = null;
+    let resolvedDurationMinutes = null;
     if (habitType === 'numeric') {
       if (numericCondition === NUMERIC_CONDITION.ANY_VALUE) {
         resolvedTarget = null;
@@ -193,6 +210,12 @@ export default function AddHabitWizard({ visible, onClose, onSave, editingHabit 
         const g = parseGoalNumber(targetValue);
         resolvedTarget = Number.isFinite(g) && g > 0 ? g : 1;
       }
+    } else if (habitType === 'timer') {
+      const parts = (timerValue || '00:00').split(':');
+      const hh = Math.max(0, parseInt(parts[0], 10) || 0);
+      const mm = Math.min(59, Math.max(0, parseInt(parts[1], 10) || 0));
+      resolvedDurationMinutes = hh * 60 + mm || 1;
+      resolvedTarget = resolvedDurationMinutes;
     } else {
       resolvedTarget = parseInt(targetValue, 10) || 1;
     }
@@ -209,7 +232,8 @@ export default function AddHabitWizard({ visible, onClose, onSave, editingHabit 
       target: resolvedTarget,
       targetValue: resolvedTarget,
       current: editingHabit?.current ?? 0,
-      unit: targetUnit,
+      unit: habitType === 'timer' ? 'minutes' : targetUnit,
+      durationMinutes: habitType === 'timer' ? resolvedDurationMinutes : undefined,
       checklistItems: habitType === 'checklist' ? checklistItems : null,
       repeatRule,
       repeatDays,

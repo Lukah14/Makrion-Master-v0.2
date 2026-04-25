@@ -10,6 +10,7 @@ import { Layout } from '@/constants/layout';
 import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/context/AuthContext';
 import { useUser } from '@/hooks/useUser';
+import { useTabBarLayout } from '@/hooks/useTabBarLayout';
 import AppearanceSheet from '@/components/settings/AppearanceSheet';
 
 function SectionLabel({ label }) {
@@ -65,6 +66,7 @@ export default function SettingsScreen() {
   const { user, signOut } = useAuth();
   const { userData, patchUser } = useUser();
   const styles = createStyles(Colors);
+  const { scrollPaddingBottom } = useTabBarLayout();
   const [appearanceOpen, setAppearanceOpen] = useState(false);
 
   const displayName = (userData?.displayName || user?.displayName || '').trim() || 'User';
@@ -127,7 +129,7 @@ export default function SettingsScreen() {
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingBottom: scrollPaddingBottom }]}
         showsVerticalScrollIndicator={false}
       >
         <Text style={styles.screenTitle}>Settings</Text>
@@ -242,7 +244,6 @@ const createStyles = (Colors) => StyleSheet.create({
   content: {
     paddingHorizontal: Layout.screenPadding,
     paddingTop: 8,
-    paddingBottom: 100,
   },
   screenTitle: {
     fontSize: 30,

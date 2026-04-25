@@ -222,7 +222,14 @@ export default function GoalProgressCard({
             style={[styles.rangeBtn, range === r && styles.rangeBtnActive]}
             activeOpacity={0.7}
           >
-            <Text style={[styles.rangeBtnText, range === r && styles.rangeBtnTextActive]}>{r}</Text>
+            <Text
+              style={[styles.rangeBtnText, range === r && styles.rangeBtnTextActive]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
+            >
+              {r}
+            </Text>
           </TouchableOpacity>
         ))}
       </View>
@@ -252,28 +259,32 @@ const createStyles = (Colors) => StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 8,
     marginBottom: 14,
   },
   title: {
     fontSize: 18,
     fontFamily: 'PlusJakartaSans-Bold',
     color: Colors.textPrimary,
+    flexShrink: 1,
   },
   pctBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    gap: 4,
     backgroundColor: Colors.background,
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: Colors.border,
+    flexShrink: 1,
   },
   pctText: {
-    fontSize: 13,
+    fontSize: 12,
     fontFamily: 'PlusJakartaSans-SemiBold',
     color: Colors.textPrimary,
+    flexShrink: 1,
   },
   pctSuffix: {
     fontFamily: 'PlusJakartaSans-Regular',

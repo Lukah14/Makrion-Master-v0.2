@@ -1,7 +1,7 @@
 import { useMemo, useState, useCallback } from 'react';
 import { useRouter } from 'expo-router';
 import {
-  ScrollView, View, Text, Image, TouchableOpacity, StyleSheet, Platform,
+  ScrollView, View, Text, Image, TouchableOpacity, StyleSheet,
   Modal, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -10,6 +10,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '@/context/ThemeContext';
 import { useNutritionDate } from '@/context/NutritionDateContext';
 import { Layout } from '@/constants/layout';
+import { useTabBarLayout } from '@/hooks/useTabBarLayout';
 import { useAuth } from '@/context/AuthContext';
 import { useUser } from '@/hooks/useUser';
 import { useFoodLog } from '@/hooks/useFoodLog';
@@ -34,7 +35,8 @@ import FoodSearchView from '@/components/nutrition/FoodSearchView';
 import EditEntrySheet from '@/components/nutrition/EditEntrySheet';
 import EditManualEntrySheet from '@/components/nutrition/EditManualEntrySheet';
 import { isHabitActiveOnDate } from '@/lib/habitSchedule';
-import { parseDateKey } from '@/lib/dateKey';
+import { parseDateKey, todayDateKey } from '@/lib/dateKey';
+import { updateNutritionStreak } from '@/services/statsService';
 
 const ICON_SETTINGS = require('@/src/Icons/Settings.png');
 const ICON_CALENDAR = require('@/src/Icons/Calendar.png');
@@ -61,6 +63,7 @@ function formatDateLabel(dateKey) {
 export default function HomeScreen() {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
+  const { scrollPaddingBottom, floatingBottom } = useTabBarLayout();
   const router = useRouter();
   const [calendarOpen, setCalendarOpen] = useState(false);
   const { dateKey, bumpCalendarRefresh, calendarRefreshKey } = useNutritionDate();
@@ -290,7 +293,10 @@ export default function HomeScreen() {
     setFoodSearchOpen(false);
     setSearchMealType(null);
     bumpCalendarRefresh();
-  }, [bumpCalendarRefresh]);
+    if (dateKey === todayDateKey() && user?.uid) {
+      void updateNutritionStreak(user.uid, dateKey).catch(() => {});
+    }
+  }, [bumpCalendarRefresh, dateKey, user?.uid]);
 
   const handleEditSave = useCallback(
     async (entryId, changes) => {
@@ -364,7 +370,7 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingBottom: scrollPaddingBottom }]}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.header}>
@@ -390,7 +396,9 @@ export default function HomeScreen() {
         </View>
 
         <StrikesRow
-          currentStreak={domainStreaks.currentStreak}
+          currentNutritionStreak={domainStreaks.currentNutritionStreak}
+          currentActivityStreak={domainStreaks.currentActivityStreak}
+          currentHabitTrackerStreak={domainStreaks.currentHabitTrackerStreak}
           loading={domainStreaks.loading}
           error={domainStreaks.error}
           onPressNutrition={() => router.push('/(tabs)/nutrition')}
@@ -455,7 +463,7 @@ export default function HomeScreen() {
       </ScrollView>
 
       <TouchableOpacity
-        style={styles.fab}
+        style={[styles.fab, { bottom: floatingBottom }]}
         activeOpacity={0.8}
         onPress={() => {
           setSearchMealType('snack');
@@ -520,7 +528,6 @@ const createStyles = (Colors) => StyleSheet.create({
   },
   content: {
     padding: Layout.screenPadding,
-    paddingBottom: 100,
   },
   header: {
     flexDirection: 'row',
@@ -568,7 +575,6 @@ const createStyles = (Colors) => StyleSheet.create({
   },
   fab: {
     position: 'absolute',
-    bottom: Platform.OS === 'ios' ? 100 : 80,
     right: 20,
     width: 56,
     height: 56,

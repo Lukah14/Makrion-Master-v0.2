@@ -517,6 +517,7 @@ export default function RecipesView() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [recentRecipes, setRecentRecipes] = useState([]);
   const [showCreateRecipe, setShowCreateRecipe] = useState(false);
+  const [editingRecipe, setEditingRecipe] = useState(null);
 
   const debounceRef = useRef(null);
 
@@ -688,23 +689,29 @@ export default function RecipesView() {
     }
   }, []);
 
-  if (showCreateRecipe) {
+  if (showCreateRecipe || editingRecipe) {
     return (
       <CreateRecipeScreen
-        onBack={() => setShowCreateRecipe(false)}
+        initialRecipe={editingRecipe || undefined}
+        onBack={() => { setShowCreateRecipe(false); setEditingRecipe(null); }}
         onCreated={() => reloadRecipes()}
       />
     );
   }
 
   if (selectedRecipe) {
-    const canDeleteRecipe = userRecipes.some((r) => r.id === selectedRecipe.id);
+    const isUserRecipe = userRecipes.some((r) => r.id === selectedRecipe.id);
     return (
       <RecipeDetailScreen
         recipe={selectedRecipe}
         loadingDetail={loadingDetail}
         onBack={() => { setSelectedRecipe(null); setLoadingDetail(false); }}
-        onDeleteRecipe={canDeleteRecipe ? async () => {
+        onEdit={isUserRecipe ? () => {
+          const full = userRecipes.find((r) => r.id === selectedRecipe.id) || selectedRecipe;
+          setSelectedRecipe(null);
+          setEditingRecipe(full);
+        } : undefined}
+        onDeleteRecipe={isUserRecipe ? async () => {
           try {
             await removeRecipe(selectedRecipe.id);
             setSelectedRecipe(null);

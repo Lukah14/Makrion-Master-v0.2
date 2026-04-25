@@ -6,7 +6,6 @@ import { listFoodLogEntries } from '@/services/foodLogService';
 import { listActivityEntries, listActivityEntriesInRange } from '@/services/activityService';
 import { listHabitCompletions, listHabitCompletionsSince } from '@/services/habitService';
 import { getStepEntry } from '@/services/stepEntryService';
-import { getWaterLog } from '@/services/waterService';
 import { getWeightEntriesByRange } from '@/services/weightEntryService';
 import { fetchMemorableMomentDateKeys } from '@/services/memorableMomentService';
 
@@ -39,7 +38,6 @@ export async function getDayDomainStrikeFlags(uid, dateKey) {
     activityEntries,
     habitList,
     stepRow,
-    water,
     weightRows,
     momentKeys,
   ] = await Promise.all([
@@ -47,24 +45,19 @@ export async function getDayDomainStrikeFlags(uid, dateKey) {
     listActivityEntries(uid, dateKey),
     listHabitCompletions(uid, dateKey),
     getStepEntry(uid, dateKey),
-    getWaterLog(uid, dateKey),
     getWeightEntriesByRange(uid, dateKey, dateKey),
     fetchMemorableMomentDateKeys(uid, dateKey, dateKey),
   ]);
 
   const steps = stepRow?.steps ?? 0;
   const hasSteps = Number(steps) > 0;
-  const waterMl = Math.max(0, Math.round(Number(water?.waterMl ?? water?.totalMl ?? 0) || 0));
-  const hasWater = waterMl > 0;
-  const hasWeight =
-    weightRows.some(
-      (row) =>
-        row?.weightKg != null && Number.isFinite(Number(row.weightKg)),
-    );
+  const hasWeight = weightRows.some(
+    (row) => row?.weightKg != null && Number.isFinite(Number(row.weightKg)),
+  );
   const hasMoment = momentKeys.has(dateKey);
 
   return {
-    nutrition: foodEntries.length > 0 || hasWater || hasWeight,
+    nutrition: foodEntries.length > 0 || hasWeight,
     activity: activityEntries.length > 0 || hasSteps,
     habitTracker: habitDayHasTrackedProgress(habitList) || hasMoment,
   };
@@ -125,21 +118,17 @@ export async function getDomainStrikeMapsForKeys(uid, sortedKeys) {
     const slice = sortedKeys.slice(i, i + BULK_FOOD_STEP_CHUNK);
     const perDay = await Promise.all(
       slice.map(async (k) => {
-        const [foodEntries, stepRow, water] = await Promise.all([
+        const [foodEntries, stepRow] = await Promise.all([
           listFoodLogEntries(uid, k),
           getStepEntry(uid, k),
-          getWaterLog(uid, k),
         ]);
-        return { k, foodEntries, stepRow, water };
+        return { k, foodEntries, stepRow };
       }),
     );
-    for (const { k, foodEntries, stepRow, water } of perDay) {
+    for (const { k, foodEntries, stepRow } of perDay) {
       const steps = stepRow?.steps ?? 0;
       const hasSteps = Number(steps) > 0;
-      const waterMl = Math.max(0, Math.round(Number(water?.waterMl ?? water?.totalMl ?? 0) || 0));
-      const hasWater = waterMl > 0;
-      const hasNutritionProof =
-        foodEntries.length > 0 || hasWater || weightDates.has(k);
+      const hasNutritionProof = foodEntries.length > 0 || weightDates.has(k);
       const hasHabitProof =
         habitDayHasTrackedProgress(habitByDate.get(k) || []) || momentDateKeys.has(k);
       nutritionMap.set(k, hasNutritionProof);

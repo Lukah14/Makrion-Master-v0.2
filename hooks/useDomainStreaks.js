@@ -9,6 +9,7 @@ import {
 } from '@/lib/dashboardStreak';
 import { getDomainStrikeMapsForKeys } from '@/services/domainStrikeService';
 import { saveDomainStrikesSnapshot } from '@/services/streakSnapshotService';
+import { ensureUserStats } from '@/services/statsService';
 
 const LOOKBACK_DAYS = 365;
 const STREAK_COLD_START_DELAY_MS = 800;
@@ -16,13 +17,13 @@ const STREAK_COLD_START_DELAY_MS = 800;
 const MIDNIGHT_TICK_MS = 30_000;
 
 /**
- * Single shared "Current Strike" derived from real Firestore daily data.
+ * Per-domain and unified streaks derived from real Firestore daily data.
  *
- * A day counts toward the streak if it has at least one valid saved entry in
- * **any** tracked domain (nutrition / activity / habit tracker). The current
- * strike walks backward from today and stops at the first missed day, so:
- *   - new valid entry today → strike grows immediately on next refresh,
- *   - no entry by next-day rollover → strike resets to 0.
+ * Returns standardised field names used across the entire app:
+ *   currentNutritionStreak / bestNutritionStreak
+ *   currentActivityStreak  / bestActivityStreak
+ *   currentHabitTrackerStreak / bestHabitTrackerStreak
+ *   currentStreak          / bestStreak   (unified — any domain counts)
  *
  * @param {number} [refreshKey]  Bump after any save (calendarRefreshKey) to refetch.
  */
@@ -33,11 +34,20 @@ export function useDomainStreaks(refreshKey = 0) {
   const generationRef = useRef(0);
   const todayKeyRef = useRef(todayDateKey());
 
+  // Unified
   const [currentStreak, setCurrentStreak] = useState(0);
   const [bestStreak, setBestStreak] = useState(0);
-  const [nutritionStreak, setNutritionStreak] = useState(0);
-  const [activityStreak, setActivityStreak] = useState(0);
-  const [habitTrackerStreak, setHabitTrackerStreak] = useState(0);
+
+  // Per-domain current
+  const [currentNutritionStreak, setCurrentNutritionStreak] = useState(0);
+  const [currentActivityStreak, setCurrentActivityStreak] = useState(0);
+  const [currentHabitTrackerStreak, setCurrentHabitTrackerStreak] = useState(0);
+
+  // Per-domain best
+  const [bestNutritionStreak, setBestNutritionStreak] = useState(0);
+  const [bestActivityStreak, setBestActivityStreak] = useState(0);
+  const [bestHabitTrackerStreak, setBestHabitTrackerStreak] = useState(0);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -52,9 +62,12 @@ export function useDomainStreaks(refreshKey = 0) {
       if (__DEV__) console.log('[STRIKE] load skipped — no user');
       setCurrentStreak(0);
       setBestStreak(0);
-      setNutritionStreak(0);
-      setActivityStreak(0);
-      setHabitTrackerStreak(0);
+      setCurrentNutritionStreak(0);
+      setCurrentActivityStreak(0);
+      setCurrentHabitTrackerStreak(0);
+      setBestNutritionStreak(0);
+      setBestActivityStreak(0);
+      setBestHabitTrackerStreak(0);
       setLoading(false);
       setError(null);
       return;
@@ -64,6 +77,10 @@ export function useDomainStreaks(refreshKey = 0) {
     if (__DEV__) console.log('[STRIKE] LOAD_START', { uid: uid.slice(0, 8) });
     setLoading(true);
     setError(null);
+
+    // Ensure stats/main doc exists and reset any stale current streaks (fire-and-forget)
+    void ensureUserStats(uid).catch(() => {});
+
     try {
       const todayKey = todayDateKey();
       todayKeyRef.current = todayKey;
@@ -81,7 +98,7 @@ export function useDomainStreaks(refreshKey = 0) {
         return;
       }
 
-      // Unified day-active map — a day "counts" if any domain logged a valid entry.
+      // Unified: a day "counts" if any domain logged a valid entry
       const unifiedMap = new Map();
       for (const k of keys) {
         unifiedMap.set(
@@ -90,44 +107,71 @@ export function useDomainStreaks(refreshKey = 0) {
         );
       }
 
+      // Unified streaks
       const cur = computeDashboardCurrentStreak(unifiedMap, todayKey);
       const best = computeBestStreakInRange(keys, unifiedMap);
 
-      const n = computeDashboardCurrentStreak(nutritionMap, todayKey);
-      const a = computeDashboardCurrentStreak(activityMap, todayKey);
-      const h = computeDashboardCurrentStreak(habitMap, todayKey);
+      // Per-domain current streaks
+      const curN = computeDashboardCurrentStreak(nutritionMap, todayKey);
+      const curA = computeDashboardCurrentStreak(activityMap, todayKey);
+      const curH = computeDashboardCurrentStreak(habitMap, todayKey);
+
+      // Per-domain best streaks
+      const bestN = computeBestStreakInRange(keys, nutritionMap);
+      const bestA = computeBestStreakInRange(keys, activityMap);
+      const bestH = computeBestStreakInRange(keys, habitMap);
 
       if (__DEV__) {
         console.log('[STRIKE] CALCULATED', {
-          currentStreak: cur,
-          bestStreak: best,
-          perDomain: { nutrition: n, activity: a, habitTracker: h },
+          unified: { current: cur, best },
+          nutrition: { current: curN, best: bestN },
+          activity: { current: curA, best: bestA },
+          habitTracker: { current: curH, best: bestH },
         });
       }
 
       setCurrentStreak(cur);
       setBestStreak(best);
-      setNutritionStreak(n);
-      setActivityStreak(a);
-      setHabitTrackerStreak(h);
+      setCurrentNutritionStreak(curN);
+      setCurrentActivityStreak(curA);
+      setCurrentHabitTrackerStreak(curH);
+      setBestNutritionStreak(bestN);
+      setBestActivityStreak(bestA);
+      setBestHabitTrackerStreak(bestH);
 
+      // Save snapshot to Firestore (fire-and-forget) when values changed
       const prev = lastSavedStrikesRef.current;
+      const todayNutritionCompleted = Boolean(nutritionMap.get(todayKey));
+      const todayActivityCompleted = Boolean(activityMap.get(todayKey));
+      const todayHabitCompleted = Boolean(habitMap.get(todayKey));
+
       if (
         !prev
         || prev.dateKey !== todayKey
-        || prev.cur !== cur
-        || prev.n !== n
-        || prev.a !== a
-        || prev.h !== h
+        || prev.curN !== curN
+        || prev.curA !== curA
+        || prev.curH !== curH
+        || prev.bestN !== bestN
+        || prev.bestA !== bestA
+        || prev.bestH !== bestH
       ) {
-        lastSavedStrikesRef.current = { dateKey: todayKey, cur, n, a, h };
+        lastSavedStrikesRef.current = { dateKey: todayKey, curN, curA, curH, bestN, bestA, bestH };
         void saveDomainStrikesSnapshot(uid, {
+          // Unified (backward compat)
           currentStreak: cur,
           bestStreak: best,
-          nutritionStreak: n,
-          activityStreak: a,
-          habitTrackerStreak: h,
+          // Per-domain — exact required names
+          currentNutritionStreak: curN,
+          bestNutritionStreak: bestN,
+          currentActivityStreak: curA,
+          bestActivityStreak: bestA,
+          currentHabitTrackerStreak: curH,
+          bestHabitTrackerStreak: bestH,
           dateKey: todayKey,
+          // Daily completion flags for dailyLogs
+          nutritionCompleted: todayNutritionCompleted,
+          activityCompleted: todayActivityCompleted,
+          habitTrackerCompleted: todayHabitCompleted,
         }).catch(() => {});
       }
     } catch (e) {
@@ -140,9 +184,12 @@ export function useDomainStreaks(refreshKey = 0) {
       setError(msg);
       setCurrentStreak(0);
       setBestStreak(0);
-      setNutritionStreak(0);
-      setActivityStreak(0);
-      setHabitTrackerStreak(0);
+      setCurrentNutritionStreak(0);
+      setCurrentActivityStreak(0);
+      setCurrentHabitTrackerStreak(0);
+      setBestNutritionStreak(0);
+      setBestActivityStreak(0);
+      setBestHabitTrackerStreak(0);
     } finally {
       if (gen === generationRef.current) {
         setLoading(false);
@@ -161,9 +208,12 @@ export function useDomainStreaks(refreshKey = 0) {
       streakColdStartPendingRef.current = true;
       setCurrentStreak(0);
       setBestStreak(0);
-      setNutritionStreak(0);
-      setActivityStreak(0);
-      setHabitTrackerStreak(0);
+      setCurrentNutritionStreak(0);
+      setCurrentActivityStreak(0);
+      setCurrentHabitTrackerStreak(0);
+      setBestNutritionStreak(0);
+      setBestActivityStreak(0);
+      setBestHabitTrackerStreak(0);
       setLoading(false);
       setError(null);
       if (__DEV__) console.log('[STRIKE] user signed out — state reset');
@@ -186,12 +236,7 @@ export function useDomainStreaks(refreshKey = 0) {
 
   /**
    * Real calendar-day rollover: when the local YYYY-MM-DD changes (e.g. user keeps the app
-   * open across midnight), recompute. Without this the streak would keep pointing at
-   * yesterday's `todayKey` and never reset.
-   *
-   * Two triggers, both cheap:
-   *   - 30s interval polling `todayDateKey()`
-   *   - AppState `active` (foregrounded after a long sleep — interval may have been throttled)
+   * open across midnight), recompute.
    */
   useEffect(() => {
     if (!user?.uid) return undefined;
@@ -223,11 +268,20 @@ export function useDomainStreaks(refreshKey = 0) {
   }, [user?.uid]);
 
   return {
+    // Unified (any domain counts; kept for backward compat)
     currentStreak,
     bestStreak,
-    nutritionStreak,
-    activityStreak,
-    habitTrackerStreak,
+    // Per-domain — exact standardised names used across the whole app
+    currentNutritionStreak,
+    bestNutritionStreak,
+    currentActivityStreak,
+    bestActivityStreak,
+    currentHabitTrackerStreak,
+    bestHabitTrackerStreak,
+    // Legacy aliases — map to domain-specific for any consumer that still uses old names
+    nutritionStreak: currentNutritionStreak,
+    activityStreak: currentActivityStreak,
+    habitTrackerStreak: currentHabitTrackerStreak,
     loading,
     error,
     reload: load,

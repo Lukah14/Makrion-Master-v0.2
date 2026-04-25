@@ -7,7 +7,6 @@ import {
   StyleSheet,
   ScrollView,
   ActivityIndicator,
-  Platform,
   InteractionManager,
   BackHandler,
 } from 'react-native';
@@ -45,6 +44,11 @@ const DASHBOARD_HREF = '/(tabs)';
 const LOGIN_HREF = '/(auth)/login';
 
 const STEPS = 8;
+/**
+ * Defensive fallback for the step counter so it never renders "missing" /
+ * "undefined" if minification ever drops the constant in a release build.
+ */
+const TOTAL_STEPS = STEPS || 8;
 
 const KCAL_MIN = 800;
 const KCAL_MAX = 5000;
@@ -1149,8 +1153,12 @@ export default function OnboardingWizard() {
             <ChevronLeft size={26} color={Colors.textPrimary} />
           )}
         </TouchableOpacity>
-        <Text style={styles.stepInd}>
-          {step + 1} / {STEPS}
+        <Text
+          style={styles.stepInd}
+          allowFontScaling={false}
+          accessibilityLabel={`Step ${step + 1} of ${TOTAL_STEPS}`}
+        >
+          {`${step + 1} / ${TOTAL_STEPS}`}
         </Text>
         <View style={styles.backPlaceholder} />
       </View>
@@ -1180,7 +1188,9 @@ export default function OnboardingWizard() {
         {(() => {
           const isLast = step === STEPS - 1;
           const disabled = saving || leavingToLogin;
-          const label = isLast ? (saving ? 'Saving...' : 'Save & Continue') : 'Continue';
+          const label = isLast
+            ? (saving ? 'Saving…' : 'Save & Continue')
+            : 'Continue';
           return (
             <TouchableOpacity
               style={[styles.primaryBtn, saving && styles.primaryBtnSaving, disabled && !saving && styles.primaryBtnDisabled]}
@@ -1229,8 +1239,13 @@ const createStyles = (Colors) =>
     backPlaceholder: { width: 42 },
     stepInd: {
       fontSize: 13,
+      lineHeight: 18,
       fontFamily: 'PlusJakartaSans-SemiBold',
       color: Colors.textTertiary,
+      textAlign: 'center',
+      textAlignVertical: 'center',
+      includeFontPadding: true,
+      minWidth: 60,
     },
     scroll: { flex: 1 },
     scrollContent: {
@@ -1599,19 +1614,26 @@ const createStyles = (Colors) =>
     },
     footer: {
       paddingHorizontal: 22,
-      paddingBottom: Platform.OS === 'ios' ? 20 : 20,
+      paddingBottom: 20,
       paddingTop: 12,
       borderTopWidth: 1,
       borderTopColor: Colors.border,
     },
+    /**
+     * Tall enough on Android release builds that the TextView can render the
+     * full bold glyph + descenders without clipping. We deliberately do not use
+     * `alignItems: 'stretch'` here — stretching the inner row to the button's
+     * minHeight forces Android to compress the Text node and chops the label
+     * vertically once a custom font is loaded.
+     */
     primaryBtn: {
       backgroundColor: Colors.textPrimary,
       borderRadius: 16,
-      paddingVertical: 16,
-      paddingHorizontal: 20,
-      alignItems: 'stretch',
+      paddingVertical: 18,
+      paddingHorizontal: 24,
+      alignItems: 'center',
       justifyContent: 'center',
-      minHeight: 56,
+      minHeight: 60,
     },
     /** Do not dim the whole button (opacity hid label + looked “broken” with spinner-only). */
     primaryBtnSaving: {
@@ -1626,12 +1648,15 @@ const createStyles = (Colors) =>
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      flex: 1,
     },
     primaryBtnSpinner: { marginRight: 10 },
     primaryBtnText: {
       fontSize: 17,
+      lineHeight: 24,
       fontFamily: 'PlusJakartaSans-Bold',
       color: Colors.onPrimary,
+      textAlign: 'center',
+      textAlignVertical: 'center',
+      includeFontPadding: true,
     },
   });

@@ -14,6 +14,7 @@ export default function HabitList({
   onTimerPause,
   onTimerStop,
   onTimerReset,
+  onTimerEditSave,
   onLongPress,
   onAddHabit,
   runningTimers,
@@ -38,6 +39,7 @@ export default function HabitList({
           onTimerPause={onTimerPause}
           onTimerStop={onTimerStop}
           onTimerReset={onTimerReset}
+          onTimerEditSave={onTimerEditSave}
           onLongPress={onLongPress}
           timerRunning={runningTimers?.[habit.id] || false}
         />

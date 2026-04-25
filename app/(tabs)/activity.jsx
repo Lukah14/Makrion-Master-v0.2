@@ -1,10 +1,12 @@
 import { useState, useCallback, useMemo } from 'react';
-import { ScrollView, View, Text, TouchableOpacity, StyleSheet, Platform, Alert } from 'react-native';
+import { ScrollView, View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Flame, Clock, Footprints, Plus } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
+import { useAuth } from '@/context/AuthContext';
 import { useNutritionDate } from '@/context/NutritionDateContext';
 import { Layout } from '@/constants/layout';
+import { useTabBarLayout } from '@/hooks/useTabBarLayout';
 import CalendarModal from '@/components/calendar/CalendarModal';
 import SelectedDateBar from '@/components/calendar/SelectedDateBar';
 import { todayDateKey } from '@/lib/dateKey';
@@ -15,6 +17,7 @@ import { useDomainStreaksContext } from '@/context/DomainStreaksContext';
 import { useActivityLog } from '@/hooks/useActivityLog';
 import { useSteps } from '@/hooks/useSteps';
 import AddEditActivityModal from '@/components/activity/AddEditActivityModal';
+import { updateActivityStreak } from '@/services/statsService';
 
 function ActivitySummaryBar({ data }) {
   const { colors: Colors } = useTheme();
@@ -69,10 +72,12 @@ function ActivitySummaryBar({ data }) {
 export default function ActivityScreen() {
   const { colors: Colors } = useTheme();
   const s = createS(Colors);
+  const { scrollPaddingBottom, floatingBottom } = useTabBarLayout();
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [activityModalOpen, setActivityModalOpen] = useState(false);
   const [editingEntryId, setEditingEntryId] = useState(null);
   const { dateKey, bumpCalendarRefresh, calendarRefreshKey } = useNutritionDate();
+  const { user } = useAuth();
   const activityLog = useActivityLog(dateKey);
   const stepsHook = useSteps(dateKey, calendarRefreshKey);
   const today = todayDateKey();
@@ -106,11 +111,14 @@ export default function ActivityScreen() {
         setActivityModalOpen(false);
         setEditingEntryId(null);
         bumpCalendarRefresh();
+        if (dateKey === today && user?.uid) {
+          void updateActivityStreak(user.uid, dateKey).catch(() => {});
+        }
       } catch (e) {
         Alert.alert('Could not save', e?.message || 'Try again.');
       }
     },
-    [activityLog, editingEntryId, bumpCalendarRefresh],
+    [activityLog, editingEntryId, bumpCalendarRefresh, dateKey, today, user?.uid],
   );
 
   const stepProgressPct = stepsHook.stepProgressPercent;
@@ -123,20 +131,20 @@ export default function ActivityScreen() {
     stepProgress: stepProgressPct,
   };
 
-  const { currentStreak } = useDomainStreaksContext();
+  const { currentActivityStreak } = useDomainStreaksContext();
 
   return (
     <SafeAreaView style={s.safeArea} edges={['top']}>
       <ScrollView
         style={s.scroll}
-        contentContainerStyle={s.content}
+        contentContainerStyle={[s.content, { paddingBottom: scrollPaddingBottom }]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
         <View style={s.pageHeader}>
           <Text style={s.screenTitle}>Activity</Text>
           <View style={s.headerActions}>
-            <StrikeBadge count={currentStreak} color="#FFD60A" />
+            <StrikeBadge count={currentActivityStreak} color="#FFD60A" />
           </View>
         </View>
 
@@ -200,7 +208,11 @@ export default function ActivityScreen() {
         <View style={{ height: 40 }} />
       </ScrollView>
 
-      <TouchableOpacity style={s.fab} activeOpacity={0.8} onPress={openAddActivity}>
+      <TouchableOpacity
+        style={[s.fab, { bottom: floatingBottom }]}
+        activeOpacity={0.8}
+        onPress={openAddActivity}
+      >
         <Plus size={24} color={Colors.onPrimary} />
       </TouchableOpacity>
 
@@ -220,7 +232,7 @@ export default function ActivityScreen() {
 const createS = (Colors) => StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: Colors.background },
   scroll: { flex: 1 },
-  content: { padding: Layout.screenPadding, paddingBottom: 100 },
+  content: { padding: Layout.screenPadding },
   pageHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -281,7 +293,6 @@ const createS = (Colors) => StyleSheet.create({
   },
   fab: {
     position: 'absolute',
-    bottom: Platform.OS === 'ios' ? 100 : 80,
     right: 20,
     width: 56,
     height: 56,

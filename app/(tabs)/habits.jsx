@@ -6,7 +6,6 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  Platform,
   Alert,
   ActivityIndicator,
 } from 'react-native';
@@ -15,6 +14,7 @@ import { Plus, ClipboardList } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import { Layout } from '@/constants/layout';
 import { useHabits } from '@/hooks/useHabits';
+import { useTabBarLayout } from '@/hooks/useTabBarLayout';
 import { useMemorableMoments } from '@/hooks/useMemorableMoments';
 import { useNutritionDate } from '@/context/NutritionDateContext';
 import CalendarModal from '@/components/calendar/CalendarModal';
@@ -49,15 +49,24 @@ import {
   removeHabitCompletion,
   clearHabitCompletionsForHabit,
 } from '@/services/habitService';
+import { updateHabitTrackerStreak } from '@/services/statsService';
 
 export default function HabitsScreen() {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
+  const { scrollPaddingBottom, floatingBottom } = useTabBarLayout();
   const { user } = useAuth();
 
   const { dateKey, bumpCalendarRefresh } = useNutritionDate();
-  const { currentStreak } = useDomainStreaksContext();
+  const { currentHabitTrackerStreak } = useDomainStreaksContext();
   const today = todayDateKey();
+
+  const triggerHabitStreak = useCallback(() => {
+    if (dateKey === today && user?.uid) {
+      void updateHabitTrackerStreak(user.uid, dateKey).catch(() => {});
+    }
+  }, [dateKey, today, user?.uid]);
+
   const [runningTimers, setRunningTimers] = useState({});
   const timerSegmentsRef = useRef({});
   const [, setTimerTick] = useState(0);
@@ -226,8 +235,9 @@ export default function HabitsScreen() {
     async (id) => {
       await toggleCompletion(id);
       bumpCalendarRefresh();
+      triggerHabitStreak();
     },
-    [toggleCompletion, bumpCalendarRefresh],
+    [toggleCompletion, bumpCalendarRefresh, triggerHabitStreak],
   );
 
   const incrementHabit = useCallback(
@@ -251,8 +261,9 @@ export default function HabitsScreen() {
         trackingStatus: null,
       });
       bumpCalendarRefresh();
+      triggerHabitStreak();
     },
-    [habits, saveDayCompletion, bumpCalendarRefresh],
+    [habits, saveDayCompletion, bumpCalendarRefresh, triggerHabitStreak],
   );
 
   const decrementHabit = useCallback(
@@ -276,8 +287,9 @@ export default function HabitsScreen() {
         trackingStatus: null,
       });
       bumpCalendarRefresh();
+      triggerHabitStreak();
     },
-    [habits, saveDayCompletion, bumpCalendarRefresh],
+    [habits, saveDayCompletion, bumpCalendarRefresh, triggerHabitStreak],
   );
 
   const numericQuickComplete = useCallback(
@@ -299,6 +311,7 @@ export default function HabitsScreen() {
           });
         }
         bumpCalendarRefresh();
+        triggerHabitStreak();
         return;
       }
       const cur = Number(habit.current) || 0;
@@ -319,8 +332,9 @@ export default function HabitsScreen() {
         });
       }
       bumpCalendarRefresh();
+      triggerHabitStreak();
     },
-    [habits, saveDayCompletion, bumpCalendarRefresh, user?.uid, dateKey, reloadHabits],
+    [habits, saveDayCompletion, bumpCalendarRefresh, user?.uid, dateKey, reloadHabits, triggerHabitStreak],
   );
 
   const setNumericCurrent = useCallback(
@@ -340,8 +354,9 @@ export default function HabitsScreen() {
         trackingStatus: null,
       });
       bumpCalendarRefresh();
+      triggerHabitStreak();
     },
-    [habits, saveDayCompletion, bumpCalendarRefresh],
+    [habits, saveDayCompletion, bumpCalendarRefresh, triggerHabitStreak],
   );
 
   const toggleChecklistItem = useCallback(
@@ -362,8 +377,9 @@ export default function HabitsScreen() {
         trackingStatus: null,
       });
       bumpCalendarRefresh();
+      triggerHabitStreak();
     },
-    [habits, saveDayCompletion, bumpCalendarRefresh],
+    [habits, saveDayCompletion, bumpCalendarRefresh, triggerHabitStreak],
   );
 
   const persistTimerSeconds = useCallback(
@@ -376,8 +392,9 @@ export default function HabitsScreen() {
         trackingStatus: null,
       });
       bumpCalendarRefresh();
+      triggerHabitStreak();
     },
-    [saveDayCompletion, bumpCalendarRefresh],
+    [saveDayCompletion, bumpCalendarRefresh, triggerHabitStreak],
   );
 
   const startOrResumeTimer = useCallback(
@@ -427,6 +444,18 @@ export default function HabitsScreen() {
       bumpCalendarRefresh();
     },
     [saveDayCompletion, bumpCalendarRefresh],
+  );
+
+  const handleTimerEditSave = useCallback(
+    async (id, elapsedSec) => {
+      const habit = habits.find((h) => h.id === id && h.type === 'timer');
+      if (!habit) return;
+      // Stop any running timer segment and set base to the manually entered value
+      timerSegmentsRef.current[id] = { baseSec: elapsedSec, segmentStart: null };
+      setRunningTimers((prev) => ({ ...prev, [id]: false }));
+      await persistTimerSeconds(id, habit, elapsedSec);
+    },
+    [habits, persistTimerSeconds],
   );
 
   const handleSaveHabit = useCallback(
@@ -565,7 +594,7 @@ export default function HabitsScreen() {
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingBottom: scrollPaddingBottom }]}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.headerRow}>
@@ -573,7 +602,7 @@ export default function HabitsScreen() {
             {activeSubpage === 'today' ? 'Today' : 'Habits'}
           </Text>
           <View style={styles.headerActions}>
-            <StrikeBadge count={currentStreak} color="#AF52DE" />
+            <StrikeBadge count={currentHabitTrackerStreak} color="#AF52DE" />
           </View>
         </View>
 
@@ -628,6 +657,7 @@ export default function HabitsScreen() {
                 onTimerPause={pauseTimer}
                 onTimerStop={stopTimer}
                 onTimerReset={resetTimer}
+                onTimerEditSave={handleTimerEditSave}
                 onHabitLongPress={(habit) => openDetail(habit, 'Calendar')}
                 onAddHabit={() => setShowWizard(true)}
                 runningTimers={runningTimers}
@@ -660,7 +690,7 @@ export default function HabitsScreen() {
       </ScrollView>
 
       <TouchableOpacity
-        style={styles.fab}
+        style={[styles.fab, { bottom: floatingBottom }]}
         onPress={() => { setEditingHabit(null); setShowWizard(true); }}
         activeOpacity={0.8}
       >
@@ -703,7 +733,6 @@ const createStyles = (Colors) => StyleSheet.create({
   },
   content: {
     padding: Layout.screenPadding,
-    paddingBottom: 100,
   },
   headerRow: {
     flexDirection: 'row',
@@ -753,7 +782,6 @@ const createStyles = (Colors) => StyleSheet.create({
   },
   fab: {
     position: 'absolute',
-    bottom: Platform.OS === 'ios' ? 100 : 80,
     right: 20,
     width: 56,
     height: 56,

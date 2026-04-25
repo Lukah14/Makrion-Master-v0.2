@@ -8,19 +8,15 @@ import { Droplets, Pencil } from 'lucide-react-native';
 import Card from '@/components/common/Card';
 import { useTheme } from '@/context/ThemeContext';
 
-const PRESET_GOALS_ML = [2000, 2500, 3000];
+const GLASS_ML = 250;
+const PRESET_GOALS_ML = [2000, 2500, 3000, 3500];
 
-function WaterGlass({ fillPercent, idx, strokeColor }) {
-  const pct = Math.max(0, Math.min(100, fillPercent));
-
+function WaterGlass({ filled, idx, strokeColor }) {
   const iTop = 17;
   const iBot = 72;
   const iH = iBot - iTop;
-
-  const fillH = (iH * pct) / 100;
+  const fillH = filled ? iH : 0;
   const fillY = iBot - fillH;
-
-  const stroke = strokeColor;
   const cid = `wgc${idx}`;
   const gid = `wgg${idx}`;
 
@@ -36,12 +32,10 @@ function WaterGlass({ fillPercent, idx, strokeColor }) {
         </LinearGradient>
       </Defs>
 
-      {pct > 0 && (
+      {filled && (
         <G clipPath={`url(#${cid})`}>
           <Rect x="0" y={fillY} width="60" height={fillH + 14} fill={`url(#${gid})`} />
-          {pct < 97 && (
-            <Ellipse cx="30" cy={fillY} rx="19" ry="2.2" fill="#BAE6FD" opacity="0.55" />
-          )}
+          <Ellipse cx="30" cy={fillY} rx="19" ry="2.2" fill="#BAE6FD" opacity="0.55" />
           <Rect
             x="13"
             y={Math.max(fillY + 5, iTop + 1)}
@@ -54,16 +48,14 @@ function WaterGlass({ fillPercent, idx, strokeColor }) {
         </G>
       )}
 
-      <Line x1="5" y1="11" x2="13" y2="74" stroke={stroke} strokeWidth="4.5" strokeLinecap="round" />
-      <Line x1="55" y1="11" x2="47" y2="74" stroke={stroke} strokeWidth="4.5" strokeLinecap="round" />
-      <Ellipse cx="30" cy="11" rx="25" ry="8" stroke={stroke} strokeWidth="4.5" fill="none" />
-      <Ellipse cx="30" cy="11" rx="20" ry="5.5" stroke={stroke} strokeWidth="2" fill="none" opacity="0.45" />
-      <Ellipse cx="30" cy="74" rx="17" ry="5" stroke={stroke} strokeWidth="4.5" fill="none" />
+      <Line x1="5" y1="11" x2="13" y2="74" stroke={strokeColor} strokeWidth="4.5" strokeLinecap="round" />
+      <Line x1="55" y1="11" x2="47" y2="74" stroke={strokeColor} strokeWidth="4.5" strokeLinecap="round" />
+      <Ellipse cx="30" cy="11" rx="25" ry="8" stroke={strokeColor} strokeWidth="4.5" fill="none" />
+      <Ellipse cx="30" cy="11" rx="20" ry="5.5" stroke={strokeColor} strokeWidth="2" fill="none" opacity="0.45" />
+      <Ellipse cx="30" cy="74" rx="17" ry="5" stroke={strokeColor} strokeWidth="4.5" fill="none" />
     </Svg>
   );
 }
-
-const SLOT_COUNT = 6;
 
 /**
  * @param {{ glasses: number, totalMl: number, goalMl: number, loading?: boolean, onGlassSlotPress: (slotIndex: number) => Promise<void>, onDeltaMl: (deltaMl: number) => Promise<void>, onCustomMl: (ml: number, mode: 'add'|'subtract') => Promise<void>, onChangeGoalMl: (ml: number) => Promise<void> }} props
@@ -80,10 +72,14 @@ export default function WaterTracker({
 }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
-  const displayGlasses = Math.min(glasses, SLOT_COUNT);
-  const safeGoal = Math.max(1, goalMl || 2500);
-  const currentL = (totalMl / 1000).toFixed(2);
-  const goalL = (safeGoal / 1000).toFixed(1);
+
+  const safeGoal = Math.max(GLASS_ML, goalMl || 2500);
+  const totalGlasses = Math.max(1, Math.round(safeGoal / GLASS_ML));
+  const completedGlasses = Math.min(
+    Math.max(0, Math.round((totalMl || 0) / GLASS_ML)),
+    totalGlasses,
+  );
+  const progressPct = totalGlasses > 0 ? Math.min(100, (completedGlasses / totalGlasses) * 100) : 0;
 
   const [goalModal, setGoalModal] = useState(false);
   const [customMl, setCustomMl] = useState(String(safeGoal));
@@ -109,6 +105,7 @@ export default function WaterTracker({
 
   return (
     <Card>
+      {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <Droplets size={20} color={Colors.water} />
@@ -127,31 +124,52 @@ export default function WaterTracker({
               activeOpacity={0.7}
               disabled={loading}
             >
-              <Text style={[styles.count, { color: Colors.primary }]}>
-                {currentL}L / {goalL}L
-              </Text>
               <Pencil size={14} color={Colors.textTertiary} />
             </TouchableOpacity>
           )}
         </View>
       </View>
 
-      <View style={styles.glassesRow}>
-        {Array.from({ length: SLOT_COUNT }).map((_, i) => (
+      {/* Progress stats */}
+      <View style={styles.statsRow}>
+        <Text style={styles.statsText}>
+          <Text style={styles.statsHighlight}>{totalMl || 0} ml</Text>
+          {' / '}
+          {safeGoal} ml
+        </Text>
+        <Text style={styles.glassesCount}>
+          {completedGlasses} / {totalGlasses} glasses
+        </Text>
+      </View>
+
+      {/* Progress bar */}
+      <View style={styles.progressBar}>
+        <View style={[styles.progressFill, { width: `${progressPct}%` }]} />
+      </View>
+
+      {/* Glasses grid */}
+      <View style={styles.glassesGrid}>
+        {Array.from({ length: totalGlasses }).map((_, i) => (
           <TouchableOpacity
             key={i}
             onPress={() => onGlassSlotPress(i)}
             activeOpacity={0.7}
             disabled={loading}
+            style={styles.glassTouch}
           >
-            <WaterGlass fillPercent={i < displayGlasses ? 100 : 0} idx={i} strokeColor={Colors.textPrimary} />
+            <WaterGlass
+              filled={i < completedGlasses}
+              idx={i}
+              strokeColor={i < completedGlasses ? Colors.primary : Colors.textTertiary}
+            />
           </TouchableOpacity>
         ))}
       </View>
 
-      <View style={[styles.buttonsRow, styles.buttonsRowWrap]}>
+      {/* Action buttons */}
+      <View style={styles.buttonsRow}>
         <TouchableOpacity
-          style={[styles.waterButtonQuad, styles.waterButtonOutline]}
+          style={[styles.waterBtn, styles.waterBtnOutline]}
           onPress={() => {
             setCustomVolumeInput('250');
             setCustomVolumeModal('subtract');
@@ -159,26 +177,26 @@ export default function WaterTracker({
           activeOpacity={0.7}
           disabled={loading}
         >
-          <Text style={styles.waterButtonTextDark}>-Custom</Text>
+          <Text style={styles.waterBtnTextDark}>- Custom</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.waterButtonQuad, styles.waterButtonOutline]}
-          onPress={() => onDeltaMl(-250)}
+          style={[styles.waterBtn, styles.waterBtnOutline]}
+          onPress={() => onDeltaMl(-GLASS_ML)}
           activeOpacity={0.7}
-          disabled={loading || totalMl <= 0}
+          disabled={loading || (totalMl || 0) <= 0}
         >
-          <Text style={styles.waterButtonTextDark}>-250</Text>
+          <Text style={styles.waterBtnTextDark}>- 250 ml</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.waterButtonQuad, styles.waterButtonTeal]}
-          onPress={() => onDeltaMl(250)}
+          style={[styles.waterBtn, styles.waterBtnTeal]}
+          onPress={() => onDeltaMl(GLASS_ML)}
           activeOpacity={0.7}
           disabled={loading}
         >
-          <Text style={styles.waterButtonTextColor}>+250</Text>
+          <Text style={styles.waterBtnTextColor}>+ 250 ml</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.waterButtonQuad, styles.waterButtonTeal]}
+          style={[styles.waterBtn, styles.waterBtnTeal]}
           onPress={() => {
             setCustomVolumeInput('250');
             setCustomVolumeModal('add');
@@ -186,10 +204,11 @@ export default function WaterTracker({
           activeOpacity={0.7}
           disabled={loading}
         >
-          <Text style={styles.waterButtonTextColor}>+Custom</Text>
+          <Text style={styles.waterBtnTextColor}>+ Custom</Text>
         </TouchableOpacity>
       </View>
 
+      {/* Custom volume modal */}
       <Modal
         visible={customVolumeModal != null}
         transparent
@@ -226,21 +245,36 @@ export default function WaterTracker({
         </Pressable>
       </Modal>
 
+      {/* Goal modal */}
       <Modal visible={goalModal} transparent animationType="fade" onRequestClose={() => setGoalModal(false)}>
         <Pressable style={styles.modalOverlay} onPress={() => setGoalModal(false)}>
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
             <Pressable style={styles.modalBox} onPress={() => {}}>
               <Text style={styles.modalTitle}>Daily water goal</Text>
-              <Text style={styles.modalHint}>Saved for this day in Firebase</Text>
+              <Text style={styles.modalHint}>Each glass = 250 ml</Text>
               <View style={styles.presetRow}>
                 {PRESET_GOALS_ML.map((ml) => (
                   <TouchableOpacity
                     key={ml}
-                    style={styles.presetBtn}
+                    style={[
+                      styles.presetBtn,
+                      safeGoal === ml && styles.presetBtnActive,
+                    ]}
                     onPress={() => applyGoal(ml)}
                     activeOpacity={0.75}
                   >
-                    <Text style={styles.presetBtnText}>{ml} ml</Text>
+                    <Text style={[
+                      styles.presetBtnText,
+                      safeGoal === ml && styles.presetBtnTextActive,
+                    ]}>
+                      {(ml / 1000).toFixed(1)} L
+                    </Text>
+                    <Text style={[
+                      styles.presetBtnSub,
+                      safeGoal === ml && styles.presetBtnTextActive,
+                    ]}>
+                      {ml / GLASS_ML} glasses
+                    </Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -272,7 +306,7 @@ const createStyles = (Colors) => StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 14,
+    marginBottom: 10,
   },
   headerLeft: {
     flexDirection: 'row',
@@ -287,58 +321,82 @@ const createStyles = (Colors) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    padding: 4,
   },
   title: {
     fontSize: 18,
     fontFamily: 'PlusJakartaSans-Bold',
     color: Colors.textPrimary,
   },
-  count: {
-    fontSize: 15,
-    fontFamily: 'PlusJakartaSans-SemiBold',
-  },
-  glassesRow: {
+  statsRow: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  statsText: {
+    fontSize: 13,
+    fontFamily: 'PlusJakartaSans-Medium',
+    color: Colors.textSecondary,
+  },
+  statsHighlight: {
+    fontFamily: 'PlusJakartaSans-Bold',
+    color: Colors.primary,
+  },
+  glassesCount: {
+    fontSize: 13,
+    fontFamily: 'PlusJakartaSans-SemiBold',
+    color: Colors.textSecondary,
+  },
+  progressBar: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: Colors.border,
     marginBottom: 16,
-    paddingHorizontal: 8,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: 3,
+    backgroundColor: Colors.primary,
+  },
+  glassesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    justifyContent: 'flex-start',
+    marginBottom: 16,
+  },
+  glassTouch: {
+    padding: 4,
   },
   buttonsRow: {
     flexDirection: 'row',
-    gap: 8,
-  },
-  buttonsRowWrap: {
     flexWrap: 'wrap',
+    gap: 8,
     justifyContent: 'space-between',
   },
-  waterButton: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  waterButtonQuad: {
+  waterBtn: {
     width: '48%',
-    marginBottom: 8,
     paddingVertical: 10,
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  waterButtonOutline: {
+  waterBtnOutline: {
     backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
-  waterButtonTeal: {
+  waterBtnTeal: {
     backgroundColor: Colors.primaryLight,
   },
-  waterButtonTextDark: {
+  waterBtnTextDark: {
     fontSize: 13,
     fontFamily: 'PlusJakartaSans-SemiBold',
     color: Colors.textPrimary,
   },
-  waterButtonTextColor: {
+  waterBtnTextColor: {
     fontSize: 13,
     fontFamily: 'PlusJakartaSans-SemiBold',
     color: Colors.primary,
@@ -380,11 +438,25 @@ const createStyles = (Colors) => StyleSheet.create({
     backgroundColor: Colors.innerCard,
     borderWidth: 1,
     borderColor: Colors.border,
+    alignItems: 'center',
+  },
+  presetBtnActive: {
+    backgroundColor: Colors.primaryLight,
+    borderColor: Colors.primary,
   },
   presetBtnText: {
     fontSize: 14,
     fontFamily: 'PlusJakartaSans-SemiBold',
     color: Colors.textPrimary,
+  },
+  presetBtnSub: {
+    fontSize: 11,
+    fontFamily: 'PlusJakartaSans-Medium',
+    color: Colors.textTertiary,
+    marginTop: 2,
+  },
+  presetBtnTextActive: {
+    color: Colors.primary,
   },
   customLabel: {
     fontSize: 13,

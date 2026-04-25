@@ -1,10 +1,11 @@
 import { useState, useCallback } from 'react';
-import { ScrollView, View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import { ScrollView, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Plus } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import { useNutritionDate } from '@/context/NutritionDateContext';
 import { Layout } from '@/constants/layout';
+import { useTabBarLayout } from '@/hooks/useTabBarLayout';
 import Card from '@/components/common/Card';
 import ProgressRing from '@/components/common/ProgressRing';
 import StrikeBadge from '@/components/common/StrikeBadge';
@@ -16,6 +17,8 @@ import RecipesView from '@/components/recipes/RecipesView';
 import { useFoodLog } from '@/hooks/useFoodLog';
 import { useUser } from '@/hooks/useUser';
 import { todayDateKey } from '@/lib/dateKey';
+import { updateNutritionStreak } from '@/services/statsService';
+import { useAuth } from '@/context/AuthContext';
 import { num } from '@/lib/num';
 import { useDomainStreaksContext } from '@/context/DomainStreaksContext';
 
@@ -96,12 +99,14 @@ function TabSelector({ activeTab, onTabChange }) {
 export default function NutritionScreen() {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
+  const { scrollPaddingBottom, floatingBottom } = useTabBarLayout();
   const [activeTab, setActiveTab] = useState('Food Log');
   const [searchMealType, setSearchMealType] = useState(null);
   const [dateSheetOpen, setDateSheetOpen] = useState(false);
   const { dateKey, bumpCalendarRefresh } = useNutritionDate();
   const foodLog = useFoodLog(dateKey);
   const { userData: userDoc, resolvedGoals } = useUser();
+  const { user } = useAuth();
   const today = todayDateKey();
   const isSearch = activeTab === 'Search';
   const isRecipes = activeTab === 'Recipes';
@@ -110,7 +115,13 @@ export default function NutritionScreen() {
   const goals = resolvedGoals ?? userDoc?.goals ?? {};
   const consumed = num(foodLog.summary?.totalsLogged?.kcal);
   const calTarget = num(goals.calories);
-  const { currentStreak } = useDomainStreaksContext();
+  const { currentNutritionStreak } = useDomainStreaksContext();
+
+  const triggerNutritionStreak = () => {
+    if (dateKey === today && user?.uid) {
+      void updateNutritionStreak(user.uid, dateKey).catch(() => {});
+    }
+  };
 
   const handleAddMeal = useCallback((mealType) => {
     setSearchMealType(mealType);
@@ -121,7 +132,8 @@ export default function NutritionScreen() {
     setActiveTab('Food Log');
     setSearchMealType(null);
     bumpCalendarRefresh();
-  }, [bumpCalendarRefresh]);
+    triggerNutritionStreak();
+  }, [bumpCalendarRefresh, dateKey, today, user?.uid]);
 
   const handleEditEntry = useCallback(async (entryId, changes) => {
     try {
@@ -179,13 +191,13 @@ export default function NutritionScreen() {
       ) : (
         <ScrollView
           style={styles.scroll}
-          contentContainerStyle={styles.content}
+          contentContainerStyle={[styles.content, { paddingBottom: scrollPaddingBottom }]}
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.pageHeader}>
             <Text style={styles.screenTitle}>Nutrition</Text>
             <View style={styles.headerActions}>
-              <StrikeBadge count={currentStreak} color="#34C759" />
+              <StrikeBadge count={currentNutritionStreak} color="#34C759" />
             </View>
           </View>
           <SelectedDateBar
@@ -212,7 +224,7 @@ export default function NutritionScreen() {
       )}
       {!isFullScreen && (
         <TouchableOpacity
-          style={styles.fab}
+          style={[styles.fab, { bottom: floatingBottom }]}
           activeOpacity={0.8}
           onPress={() => handleAddMeal('breakfast')}
         >
@@ -227,7 +239,7 @@ export default function NutritionScreen() {
 const createStyles = (Colors) => StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: Colors.background },
   scroll: { flex: 1 },
-  content: { padding: Layout.screenPadding, paddingBottom: 100 },
+  content: { padding: Layout.screenPadding },
   pageHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   screenTitle: { fontSize: 28, fontFamily: 'PlusJakartaSans-Bold', color: Colors.textPrimary },
@@ -250,5 +262,5 @@ const createStyles = (Colors) => StyleSheet.create({
   tabActive: { backgroundColor: Colors.textPrimary },
   tabText: { fontSize: 14, fontFamily: 'PlusJakartaSans-Medium', color: Colors.textTertiary },
   tabTextActive: { color: Colors.onPrimary, fontFamily: 'PlusJakartaSans-SemiBold' },
-  fab: { position: 'absolute', bottom: Platform.OS === 'ios' ? 100 : 80, right: 20, width: 56, height: 56, borderRadius: 28, backgroundColor: Colors.textPrimary, justifyContent: 'center', alignItems: 'center', shadowColor: Colors.shadowColor, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 10, elevation: 8, zIndex: 100 },
+  fab: { position: 'absolute', right: 20, width: 56, height: 56, borderRadius: 28, backgroundColor: Colors.textPrimary, justifyContent: 'center', alignItems: 'center', shadowColor: Colors.shadowColor, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 10, elevation: 8, zIndex: 100 },
 });

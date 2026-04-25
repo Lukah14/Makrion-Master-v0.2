@@ -107,7 +107,14 @@ export default function FoodLogSections({
     return (
       <View style={s.centerBox}>
         <ActivityIndicator size="large" color={Colors.primary} />
-        <Text style={s.centerText}>Loading food log…</Text>
+      </View>
+    );
+  }
+
+  if (!loading && (!entries || entries.length === 0)) {
+    return (
+      <View style={s.centerBox}>
+        <Text style={s.centerText}>There is no food logged yet.</Text>
       </View>
     );
   }

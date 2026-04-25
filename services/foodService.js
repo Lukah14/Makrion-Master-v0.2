@@ -24,6 +24,29 @@ function buildSearchableText(name, brand) {
   return [name, brand].filter(Boolean).join(' ').toLowerCase();
 }
 
+function normalize(str) {
+  return (str || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/**
+ * Returns a stable, serving-size-independent key for a food item.
+ * Used as the Firestore document ID for favorites and myFoods so that
+ * the same food saved multiple times (different servings) results in
+ * exactly ONE document.
+ */
+export function getFoodCanonicalKey(food) {
+  if (!food) return 'unknown';
+  const source = food.source || 'fatsecret';
+  if (source !== 'user' && source !== 'manual') {
+    const id = food.foodId || food.food_id || food.sourceId || food.id;
+    if (id) return `${source}:${String(id)}`;
+  }
+  if (food.barcode) return `barcode:${food.barcode}`;
+  const name = normalize(food.name);
+  const brand = normalize(food.brand || '');
+  return `user:${brand}:${name}`;
+}
+
 export function buildMyFoodPayload({
   name,
   brand = '',
@@ -114,8 +137,11 @@ function myFoodsRef(uid) {
 
 export async function createMyFood(uid, foodData) {
   const payload = buildMyFoodPayload({ ...foodData, source: 'user', createdBy: uid });
-  const ref = await addDoc(myFoodsRef(uid), payload);
-  return ref.id;
+  const canonicalKey = getFoodCanonicalKey({ ...foodData, source: 'user' });
+  payload.canonicalKey = canonicalKey;
+  const ref = doc(db, 'users', uid, 'myFoods', canonicalKey);
+  await setDoc(ref, payload, { merge: true });
+  return canonicalKey;
 }
 
 export async function getMyFood(uid, foodId) {
@@ -285,8 +311,10 @@ function favoritesRef(uid) {
 }
 
 export async function addFavorite(uid, food) {
-  const ref = doc(db, 'users', uid, 'favorites', food.id);
+  const canonicalKey = getFoodCanonicalKey(food);
+  const ref = doc(db, 'users', uid, 'favorites', canonicalKey);
   await setDoc(ref, {
+    canonicalKey,
     foodId: food.id,
     name: food.name,
     brand: food.brand || '',
@@ -308,9 +336,14 @@ export async function listFavorites(uid) {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
-export async function isFavorite(uid, foodId) {
-  const snap = await getDoc(doc(db, 'users', uid, 'favorites', foodId));
-  return snap.exists();
+export async function isFavorite(uid, foodOrId) {
+  const key = typeof foodOrId === 'object' && foodOrId !== null
+    ? getFoodCanonicalKey(foodOrId)
+    : String(foodOrId);
+  const snap = await getDoc(doc(db, 'users', uid, 'favorites', key));
+  if (snap.exists()) return true;
+  const legacySnap = await getDoc(doc(db, 'users', uid, 'favorites', String(foodOrId?.id || foodOrId)));
+  return legacySnap.exists();
 }
 
 function round1(n) {

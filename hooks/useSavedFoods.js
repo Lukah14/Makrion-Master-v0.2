@@ -6,6 +6,7 @@ import {
   addFavorite,
   removeFavorite,
   favoriteDocToSearchModel,
+  getFoodCanonicalKey,
 } from '@/services/foodService';
 
 function favoritesColl(uid) {
@@ -46,17 +47,52 @@ export function useSavedFoods() {
     return () => unsub();
   }, [user?.uid]);
 
-  const savedIds = useMemo(
-    () => new Set(items.map((i) => String(i.foodId || i.id))),
-    [items]
-  );
+  const deduplicatedItems = useMemo(() => {
+    const seen = new Map();
+    for (const item of items) {
+      const key = item.canonicalKey || item.foodId || item.id;
+      if (!seen.has(key)) {
+        seen.set(key, item);
+      } else {
+        const existing = seen.get(key);
+        const existingTime = existing.addedAt?.toMillis?.() ?? 0;
+        const itemTime = item.addedAt?.toMillis?.() ?? 0;
+        if (itemTime > existingTime) seen.set(key, item);
+      }
+    }
+    return Array.from(seen.values());
+  }, [items]);
+
+  const savedKeys = useMemo(() => {
+    const set = new Set();
+    for (const i of deduplicatedItems) {
+      if (i.canonicalKey) set.add(i.canonicalKey);
+      if (i.foodId) set.add(String(i.foodId));
+      if (i.id) set.add(String(i.id));
+    }
+    return set;
+  }, [deduplicatedItems]);
+
+  const savedIds = savedKeys;
 
   const isFoodSaved = useCallback(
-    (foodId) => savedIds.has(String(foodId)),
-    [savedIds]
+    (foodOrId) => {
+      if (foodOrId && typeof foodOrId === 'object') {
+        const key = getFoodCanonicalKey(foodOrId);
+        if (savedKeys.has(key)) return true;
+        const rawId = String(foodOrId.id || '');
+        return savedKeys.has(rawId) || savedKeys.has(`fatsecret:${rawId}`);
+      }
+      const id = String(foodOrId || '');
+      return savedKeys.has(id) || savedKeys.has(`fatsecret:${id}`);
+    },
+    [savedKeys]
   );
 
-  const searchModels = useMemo(() => items.map(favoriteDocToSearchModel), [items]);
+  const searchModels = useMemo(
+    () => deduplicatedItems.map(favoriteDocToSearchModel),
+    [deduplicatedItems]
+  );
 
   const saveFood = useCallback(
     async (foodModel) => {
@@ -67,27 +103,31 @@ export function useSavedFoods() {
   );
 
   const unsaveFood = useCallback(
-    async (foodId) => {
+    async (foodOrId) => {
       if (!user) return;
-      await removeFavorite(user.uid, foodId);
+      if (foodOrId && typeof foodOrId === 'object') {
+        const key = getFoodCanonicalKey(foodOrId);
+        await removeFavorite(user.uid, key);
+      } else {
+        await removeFavorite(user.uid, String(foodOrId));
+      }
     },
     [user]
   );
 
   const toggleSaveFood = useCallback(
     async (foodModel) => {
-      const id = String(foodModel.id);
-      if (savedIds.has(id)) {
-        await unsaveFood(id);
+      if (isFoodSaved(foodModel)) {
+        await unsaveFood(foodModel);
       } else {
         await saveFood(foodModel);
       }
     },
-    [savedIds, saveFood, unsaveFood]
+    [isFoodSaved, saveFood, unsaveFood]
   );
 
   return {
-    items,
+    items: deduplicatedItems,
     searchModels,
     loading,
     error,

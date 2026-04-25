@@ -121,7 +121,7 @@ export default function AddToLogSheet({ visible, food, onAdd, onClose, initialMe
   }
 
   const isGramMode = hasServings ? selectedServing.isGramServing : true;
-  const qtyStep = isGramMode ? 10 : 0.5;
+  const qtyStep = isGramMode ? 1 : 0.5;
   const qtyMin = isGramMode ? 1 : 0.5;
   const qtyUnitSuffix = isGramMode && hasServings && selectedServing?.metricUnit === 'ml' ? 'ml' : isGramMode ? 'g' : '';
 

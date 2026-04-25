@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "948141985962",
+    "project_id": "macro-lukica",
+    "storage_bucket": "macro-lukica.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:948141985962:android:af14186beb9b0fe19780d3",
+        "android_client_info": {
+          "package_name": "com.luka_h42.makrion"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "948141985962-rpbe02nnhd77d9bv1qu2f5tb8275dp17.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.luka_h42.makrion",
+            "certificate_hash": "9f0653e94ba8242f3db52d1d73b1b89e4ef329c7"
+          }
+        },
+        {
+          "client_id": "948141985962-vv1t666d799714e15bofe4q70l2est10.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD0JmBnfQ0B_k8_rMJ0YocwmIQukYmcGog"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "948141985962-vv1t666d799714e15bofe4q70l2est10.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

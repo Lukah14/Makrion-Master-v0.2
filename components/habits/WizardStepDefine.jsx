@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -75,29 +75,80 @@ function ConditionDropdown({ value, onChange, options, fullWidth }) {
   );
 }
 
-function TimeInput({ value, onChange }) {
+function HHMMInput({ value, onChange }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
-  const [focused, setFocused] = useState(false);
 
-  const handleChange = (text) => {
-    const digits = text.replace(/\D/g, '').slice(0, 4);
-    if (digits.length <= 2) onChange(digits);
-    else onChange(`${digits.slice(0, 2)}:${digits.slice(2)}`);
+  const parseValue = (v) => {
+    const parts = (v || '00:00').split(':');
+    return {
+      h: String(parseInt(parts[0], 10) || 0),
+      m: String(parseInt(parts[1], 10) || 0),
+    };
+  };
+
+  const initial = parseValue(value);
+  const [hStr, setHStr] = useState(initial.h);
+  const [mStr, setMStr] = useState(initial.m);
+  const lastValueRef = useRef(value);
+
+  // Sync from parent only when value changes externally (not from our own onChange)
+  useEffect(() => {
+    if (value !== lastValueRef.current) {
+      lastValueRef.current = value;
+      const parsed = parseValue(value);
+      setHStr(parsed.h);
+      setMStr(parsed.m);
+    }
+  }, [value]);
+
+  const commit = (newH, newM) => {
+    const h = Math.max(0, parseInt(newH, 10) || 0);
+    const m = Math.min(59, Math.max(0, parseInt(newM, 10) || 0));
+    const formatted = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    lastValueRef.current = formatted;
+    onChange(formatted);
+  };
+
+  const handleHBlur = () => {
+    const h = Math.max(0, parseInt(hStr, 10) || 0);
+    setHStr(String(h).padStart(2, '0'));
+    commit(hStr, mStr);
+  };
+
+  const handleMBlur = () => {
+    const m = Math.min(59, Math.max(0, parseInt(mStr, 10) || 0));
+    setMStr(String(m).padStart(2, '0'));
+    commit(hStr, mStr);
   };
 
   return (
-    <View style={[styles.timeBox, focused && styles.timeBoxFocused]}>
-      <TextInput
-        style={styles.timeInput}
-        value={value || '00:00'}
-        onChangeText={handleChange}
-        keyboardType="numeric"
-        maxLength={5}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-        selectTextOnFocus
-      />
+    <View style={styles.hhmmRow}>
+      <View style={styles.hhmmFieldWrap}>
+        <TextInput
+          style={styles.hhmmField}
+          value={hStr}
+          onChangeText={(t) => setHStr(t.replace(/\D/g, ''))}
+          onBlur={handleHBlur}
+          keyboardType="number-pad"
+          maxLength={3}
+          selectTextOnFocus
+        />
+        <Text style={styles.hhmmUnit}>HH</Text>
+      </View>
+      <Text style={styles.hhmmColon}>:</Text>
+      <View style={styles.hhmmFieldWrap}>
+        <TextInput
+          style={styles.hhmmField}
+          value={mStr}
+          onChangeText={(t) => setMStr(t.replace(/\D/g, ''))}
+          onBlur={handleMBlur}
+          keyboardType="number-pad"
+          maxLength={2}
+          selectTextOnFocus
+        />
+        <Text style={styles.hhmmUnit}>MM</Text>
+      </View>
     </View>
   );
 }
@@ -273,7 +324,7 @@ export default function WizardStepDefine({
 
           <View style={styles.timerRow}>
             {condition !== 'Any value' ? (
-              <TimeInput value={timerValue} onChange={onTimerValueChange} />
+              <HHMMInput value={timerValue} onChange={onTimerValueChange} />
             ) : (
               <View style={styles.anyTimerBox}>
                 <Clock size={15} color={Colors.textTertiary} />
@@ -490,24 +541,39 @@ const createStyles = (Colors) => StyleSheet.create({
     gap: 14,
     marginTop: 14,
   },
-  timeBox: {
-    borderWidth: 1,
+  hhmmRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  hhmmFieldWrap: {
+    alignItems: 'center',
+    gap: 4,
+  },
+  hhmmField: {
+    width: 64,
+    height: 52,
+    borderWidth: 1.5,
     borderColor: Colors.border,
     borderRadius: 12,
-    paddingHorizontal: 20,
-    paddingVertical: 14,
     backgroundColor: Colors.innerCard,
-    alignItems: 'center',
-    minWidth: 120,
-  },
-  timeBoxFocused: { borderColor: Colors.error },
-  timeInput: {
     fontSize: 24,
     fontFamily: 'PlusJakartaSans-Bold',
     color: Colors.textPrimary,
     textAlign: 'center',
     padding: 0,
-    letterSpacing: 3,
+  },
+  hhmmUnit: {
+    fontSize: 11,
+    fontFamily: 'PlusJakartaSans-Medium',
+    color: Colors.textTertiary,
+    letterSpacing: 1,
+  },
+  hhmmColon: {
+    fontSize: 26,
+    fontFamily: 'PlusJakartaSans-Bold',
+    color: Colors.textPrimary,
+    marginTop: -8,
   },
   anyTimerBox: {
     flexDirection: 'row',

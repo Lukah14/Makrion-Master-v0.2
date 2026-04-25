@@ -337,19 +337,30 @@ function EditIngredientSheet({ ingredient, onChange, onClose }) {
 
 /* ─── Main Create Recipe Screen ────────────────────────────────────────── */
 
-export default function CreateRecipeScreen({ onBack, onCreated }) {
+export default function CreateRecipeScreen({ onBack, onCreated, initialRecipe }) {
   const { colors: Colors } = useTheme();
   const s = createStyles(Colors);
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const { addRecipe } = useRecipes();
+  const { addRecipe, editRecipe } = useRecipes();
 
-  const [title, setTitle] = useState('');
-  const [ingredients, setIngredients] = useState([]);
-  const [instructions, setInstructions] = useState('');
-  const [servings, setServings] = useState('1');
-  const [prepTime, setPrepTime] = useState('');
-  const [cookTime, setCookTime] = useState('');
+  const isEditing = !!initialRecipe;
+
+  const [title, setTitle] = useState(() => initialRecipe?.name || '');
+  const [ingredients, setIngredients] = useState(() =>
+    (initialRecipe?.ingredients || []).map((ing, i) => ({
+      ...ing,
+      id: ing.id || `existing_${i}`,
+    }))
+  );
+  const [instructions, setInstructions] = useState(() => initialRecipe?.description || '');
+  const [servings, setServings] = useState(() => String(initialRecipe?.servings || 1));
+  const [prepTime, setPrepTime] = useState(() =>
+    initialRecipe?.prepTimeMinutes != null ? String(initialRecipe.prepTimeMinutes) : ''
+  );
+  const [cookTime, setCookTime] = useState(() =>
+    initialRecipe?.cookTimeMinutes != null ? String(initialRecipe.cookTimeMinutes) : ''
+  );
   const [saving, setSaving] = useState(false);
 
   const [showSearch, setShowSearch] = useState(false);
@@ -413,18 +424,23 @@ export default function CreateRecipeScreen({ onBack, onCreated }) {
         per100g: ing.per100g,
         nutrients: ing.nutrients,
       }));
-      await addRecipe({
+      const recipeData = {
         name: title.trim(),
         servings: servingsNum,
         prepTimeMinutes: parseInt(prepTime, 10) || 0,
         cookTimeMinutes: parseInt(cookTime, 10) || 0,
         description: instructions.trim(),
         ingredients: ingForSave,
-      });
+      };
+      if (isEditing) {
+        await editRecipe(initialRecipe.id, recipeData);
+      } else {
+        await addRecipe(recipeData);
+      }
       onCreated?.();
       onBack();
     } catch (err) {
-      Alert.alert('Error', err.message || 'Failed to create recipe');
+      Alert.alert('Error', err.message || `Failed to ${isEditing ? 'update' : 'create'} recipe`);
     } finally {
       setSaving(false);
     }
@@ -462,7 +478,7 @@ export default function CreateRecipeScreen({ onBack, onCreated }) {
         <TouchableOpacity onPress={onBack} style={s.backBtn} activeOpacity={0.7}>
           <ArrowLeft size={22} color={Colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={s.topBarTitle}>Create Recipe</Text>
+        <Text style={s.topBarTitle}>{isEditing ? 'Edit Recipe' : 'Create Recipe'}</Text>
         <View style={{ width: 40 }} />
       </View>
 
@@ -645,7 +661,7 @@ export default function CreateRecipeScreen({ onBack, onCreated }) {
           disabled={!isValid || saving}
         >
           <Text style={[s.createBtnText, !isValid && s.createBtnTextDisabled]}>
-            {saving ? 'Saving...' : 'Create Recipe'}
+            {saving ? 'Saving...' : isEditing ? 'Save Changes' : 'Create Recipe'}
           </Text>
         </TouchableOpacity>
       </View>

@@ -63,7 +63,7 @@ export default function GoalPhaseCard({ goal, onEdit }) {
   if (goal.estimatedGoalDate && typeof goal.estimatedGoalDate === 'string') {
     try {
       const d = new Date(goal.estimatedGoalDate.slice(0, 10) + 'T12:00:00');
-      goalByLabel = d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+      goalByLabel = d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
     } catch {
       goalByLabel = goal.estimatedGoalDate.slice(0, 10);
     }
@@ -194,17 +194,26 @@ const createStyles = (Colors) => StyleSheet.create({
   timeRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 12,
+    alignItems: 'flex-start',
+    gap: 6,
+    marginBottom: 6,
   },
   timeLabel: {
     fontSize: 11,
     color: Colors.textTertiary,
     fontFamily: 'PlusJakartaSans-Regular',
+    flexShrink: 1,
+    flexWrap: 'wrap',
+    lineHeight: 16,
   },
   timeVal: {
     fontSize: 11,
     color: Colors.textTertiary,
     fontFamily: 'PlusJakartaSans-SemiBold',
+    flexShrink: 1,
+    textAlign: 'right',
+    flexWrap: 'wrap',
+    lineHeight: 16,
   },
   editBtn: {
     backgroundColor: Colors.textPrimary,

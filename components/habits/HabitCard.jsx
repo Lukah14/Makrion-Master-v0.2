@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Pressable, TextInput, Keyboard } from 'react-native';
-import { Check, Plus, Minus, Play, Pause, Square, RotateCcw } from 'lucide-react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Pressable, TextInput, Keyboard, Modal } from 'react-native';
+import { Check, Plus, Minus, Play, Pause, Square, RotateCcw, Pencil } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import { Layout } from '@/constants/layout';
 import { HabitCategoryIcon } from './habitIconMap';
@@ -176,23 +176,76 @@ function formatDuration(totalSec) {
   const s = Math.max(0, Math.floor(Number(totalSec) || 0));
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
-  const r = s % 60;
-  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`;
-  return `${m}:${String(r).padStart(2, '0')}`;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+function HHMMEditInput({ initialSec, onSave, onCancel }) {
+  const { colors: Colors } = useTheme();
+  const styles = createStyles(Colors);
+  const initMin = Math.floor(Math.max(0, Number(initialSec) || 0) / 60);
+  const [hStr, setHStr] = useState(String(Math.floor(initMin / 60)));
+  const [mStr, setMStr] = useState(String(initMin % 60));
+  const [mError, setMError] = useState(false);
+
+  const handleSave = () => {
+    const h = Math.max(0, parseInt(hStr, 10) || 0);
+    const m = parseInt(mStr, 10) || 0;
+    if (m > 59) { setMError(true); return; }
+    onSave((h * 60 + m) * 60);
+  };
+
+  return (
+    <View style={styles.editInputWrap}>
+      <Text style={styles.editModalTitle}>Set completed time</Text>
+      <View style={styles.editHHMM}>
+        <View style={styles.editFieldWrap}>
+          <TextInput
+            style={styles.editField}
+            value={hStr}
+            onChangeText={(t) => setHStr(t.replace(/\D/g, ''))}
+            keyboardType="number-pad"
+            maxLength={3}
+            selectTextOnFocus
+          />
+          <Text style={styles.editUnit}>HH</Text>
+        </View>
+        <Text style={styles.editColon}>:</Text>
+        <View style={styles.editFieldWrap}>
+          <TextInput
+            style={[styles.editField, mError && styles.editFieldError]}
+            value={mStr}
+            onChangeText={(t) => { setMStr(t.replace(/\D/g, '')); setMError(false); }}
+            keyboardType="number-pad"
+            maxLength={2}
+            selectTextOnFocus
+          />
+          <Text style={styles.editUnit}>MM</Text>
+        </View>
+      </View>
+      {mError && <Text style={styles.editError}>Minutes must be 0–59</Text>}
+      <TouchableOpacity style={styles.editSaveBtn} onPress={handleSave} activeOpacity={0.8}>
+        <Text style={styles.editSaveBtnText}>Save</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={styles.editCancelBtn} onPress={onCancel} activeOpacity={0.8}>
+        <Text style={styles.editCancelBtnText}>Cancel</Text>
+      </TouchableOpacity>
+    </View>
+  );
 }
 
 function TimerExpanded({
   elapsedSec,
   targetSec,
-  unit,
   isRunning,
   onStart,
   onPause,
   onStop,
   onReset,
+  onEditSave,
 }) {
   const { colors: Colors } = useTheme();
   const styles = createStyles(Colors);
+  const [editOpen, setEditOpen] = useState(false);
   const ts = Math.max(1, Number(targetSec) || 1);
   const es = Math.max(0, Number(elapsedSec) || 0);
   const pct = Math.min((es / ts) * 100, 100);
@@ -201,11 +254,7 @@ function TimerExpanded({
     <View style={styles.expandedSection}>
       <Text style={styles.timerValue}>
         {formatDuration(es)}
-        <Text style={styles.timerValueRest}>
-          {' '}
-          / {formatDuration(ts)}
-          {unit ? ` ${unit}` : ''}
-        </Text>
+        <Text style={styles.timerValueRest}>{' / '}{formatDuration(ts)}</Text>
       </Text>
       <View style={[styles.progressBar, { marginBottom: 10 }]}>
         <View style={[styles.progressFill, { width: `${pct}%` }]} />
@@ -228,7 +277,34 @@ function TimerExpanded({
         <TouchableOpacity style={styles.timerBtnSecondary} onPress={onReset} activeOpacity={0.7}>
           <RotateCcw size={16} color={Colors.textSecondary} />
         </TouchableOpacity>
+        {onEditSave && (
+          <TouchableOpacity
+            style={styles.timerBtnSecondary}
+            onPress={() => setEditOpen(true)}
+            activeOpacity={0.7}
+          >
+            <Pencil size={16} color={Colors.textSecondary} />
+          </TouchableOpacity>
+        )}
       </View>
+
+      <Modal
+        visible={editOpen}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setEditOpen(false)}
+      >
+        <Pressable style={styles.editOverlay} onPress={() => setEditOpen(false)}>
+          <Pressable style={styles.editSheet} onPress={() => {}}>
+            <HHMMEditInput
+              initialSec={es}
+              onSave={(sec) => { onEditSave(sec); setEditOpen(false); }}
+              onCancel={() => setEditOpen(false)}
+            />
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -245,6 +321,7 @@ export default function HabitCard({
   onTimerPause,
   onTimerStop,
   onTimerReset,
+  onTimerEditSave,
   onLongPress,
   timerRunning,
 }) {
@@ -378,12 +455,12 @@ export default function HabitCard({
         <TimerExpanded
           elapsedSec={habit._timerElapsedSec ?? 0}
           targetSec={habit._timerTargetSec ?? timerTargetToSeconds(habit)}
-          unit={habit.unit}
           isRunning={timerRunning}
           onStart={() => onTimerStart(habit.id)}
           onPause={() => onTimerPause?.(habit.id)}
           onStop={() => onTimerStop(habit.id)}
           onReset={() => onTimerReset(habit.id)}
+          onEditSave={onTimerEditSave ? (sec) => onTimerEditSave(habit.id, sec) : undefined}
         />
       )}
 
@@ -589,5 +666,103 @@ const createStyles = (Colors) => StyleSheet.create({
   checklistTextDone: {
     textDecorationLine: 'line-through',
     color: Colors.textTertiary,
+  },
+  editOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  editSheet: {
+    backgroundColor: Colors.cardBackground,
+    borderRadius: 20,
+    padding: 24,
+    width: '100%',
+    maxWidth: 340,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  editInputWrap: {
+    alignItems: 'center',
+  },
+  editModalTitle: {
+    fontSize: 16,
+    fontFamily: 'PlusJakartaSans-Bold',
+    color: Colors.textPrimary,
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  editHHMM: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+    marginBottom: 8,
+  },
+  editFieldWrap: {
+    alignItems: 'center',
+    gap: 4,
+  },
+  editField: {
+    width: 72,
+    height: 56,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    borderRadius: 12,
+    backgroundColor: Colors.background,
+    fontSize: 26,
+    fontFamily: 'PlusJakartaSans-Bold',
+    color: Colors.textPrimary,
+    textAlign: 'center',
+    padding: 0,
+  },
+  editFieldError: {
+    borderColor: Colors.error || '#E53935',
+  },
+  editUnit: {
+    fontSize: 11,
+    fontFamily: 'PlusJakartaSans-Medium',
+    color: Colors.textTertiary,
+    letterSpacing: 1,
+  },
+  editColon: {
+    fontSize: 28,
+    fontFamily: 'PlusJakartaSans-Bold',
+    color: Colors.textPrimary,
+    marginBottom: 20,
+  },
+  editError: {
+    fontSize: 12,
+    color: Colors.error || '#E53935',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  editSaveBtn: {
+    backgroundColor: Colors.primary,
+    borderRadius: 12,
+    paddingVertical: 13,
+    paddingHorizontal: 32,
+    marginTop: 16,
+    width: '100%',
+    alignItems: 'center',
+  },
+  editSaveBtnText: {
+    fontSize: 15,
+    fontFamily: 'PlusJakartaSans-Bold',
+    color: Colors.onPrimary,
+  },
+  editCancelBtn: {
+    paddingVertical: 10,
+    marginTop: 8,
+    width: '100%',
+    alignItems: 'center',
+  },
+  editCancelBtnText: {
+    fontSize: 14,
+    fontFamily: 'PlusJakartaSans-Medium',
+    color: Colors.textSecondary,
   },
 });
