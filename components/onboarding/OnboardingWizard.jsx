@@ -1662,24 +1662,35 @@ const createStyles = (Colors) =>
     },
     primaryBtnSpinner: { marginRight: 10 },
     /**
-     * Android release-build text measurement quirk: with a custom Bold font,
-     * Android sometimes measures a Text node 1–2px narrower than the glyphs
-     * actually render, which clips the trailing character ("Continue" → "Continu").
-     * Mitigations applied here:
-     *   - generous lineHeight so descenders are never vertically cropped,
-     *   - includeFontPadding kept false (correct for custom fonts),
-     *   - no flexShrink so the Text dictates its own natural width,
-     *   - the JSX above places this Text as a direct child of the centered
-     *     TouchableOpacity (when not saving), which is the safest layout for
-     *     Android release builds.
+     * Android release-build text-measurement quirk: with a custom Bold font
+     * (PlusJakartaSans-Bold via @expo-google-fonts), Android's TextPaint in
+     * release mode sometimes measures a Text node 1–2px narrower than the
+     * glyphs actually render — this clips the trailing character
+     * ("Continue" → "Continu"). The bug does not appear in dev/Hermes mode.
+     *
+     * Mitigations stacked here (all are needed; each addresses a different
+     * code path in the measurement):
+     *   1. `letterSpacing: 0.1` — non-zero letter spacing forces Android into
+     *      a different TextPaint measurement code path that does NOT have the
+     *      truncation bug. This is the canonical industry-proven fix.
+     *   2. `paddingHorizontal: 4` on the Text itself — internal buffer so even
+     *      a wrong measurement still has room to render the last glyph.
+     *   3. `lineHeight: 28` + `includeFontPadding: false` — descenders can
+     *      never be cropped vertically.
+     *   4. No `flexShrink` — the Text dictates its own natural width.
+     *   5. JSX places this Text as a direct child of the centered
+     *      TouchableOpacity when no spinner is shown, eliminating the
+     *      flex-row measurement chain entirely.
      */
     primaryBtnText: {
       fontSize: 17,
       lineHeight: 28,
+      letterSpacing: 0.1,
       fontFamily: 'PlusJakartaSans-Bold',
       color: Colors.onPrimary,
       textAlign: 'center',
       textAlignVertical: 'center',
       includeFontPadding: false,
+      paddingHorizontal: 4,
     },
   });
