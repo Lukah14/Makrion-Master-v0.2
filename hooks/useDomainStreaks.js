@@ -15,6 +15,8 @@ const LOOKBACK_DAYS = 365;
 const STREAK_COLD_START_DELAY_MS = 800;
 /** Cheap clock tick — checks if `todayDateKey()` rolled over to a new day. */
 const MIDNIGHT_TICK_MS = 30_000;
+/** Safety timeout — force loading=false if Firestore reads hang longer than this. */
+const LOAD_SAFETY_TIMEOUT_MS = 10_000;
 
 /**
  * Per-domain and unified streaks derived from real Firestore daily data.
@@ -50,6 +52,7 @@ export function useDomainStreaks(refreshKey = 0) {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const safetyTimerRef = useRef(null);
 
   useEffect(() => {
     lastSavedStrikesRef.current = null;
@@ -60,6 +63,7 @@ export function useDomainStreaks(refreshKey = 0) {
 
     if (!user?.uid) {
       if (__DEV__) console.log('[STRIKE] load skipped — no user');
+      clearTimeout(safetyTimerRef.current);
       setCurrentStreak(0);
       setBestStreak(0);
       setCurrentNutritionStreak(0);
@@ -77,6 +81,13 @@ export function useDomainStreaks(refreshKey = 0) {
     if (__DEV__) console.log('[STRIKE] LOAD_START', { uid: uid.slice(0, 8) });
     setLoading(true);
     setError(null);
+
+    // Safety valve: if Firestore reads hang, clear loading after LOAD_SAFETY_TIMEOUT_MS.
+    clearTimeout(safetyTimerRef.current);
+    safetyTimerRef.current = setTimeout(() => {
+      if (__DEV__) console.warn('[STRIKE] safety timeout — forcing loading=false');
+      setLoading(false);
+    }, LOAD_SAFETY_TIMEOUT_MS);
 
     // Ensure stats/main doc exists and reset any stale current streaks (fire-and-forget)
     void ensureUserStats(uid).catch(() => {});
@@ -191,10 +202,12 @@ export function useDomainStreaks(refreshKey = 0) {
       setBestActivityStreak(0);
       setBestHabitTrackerStreak(0);
     } finally {
-      if (gen === generationRef.current) {
-        setLoading(false);
-        if (__DEV__) console.log('[STRIKE] LOAD_END');
-      }
+      clearTimeout(safetyTimerRef.current);
+      // Always clear loading regardless of generation. The generation guard on the
+      // data setters (above) already prevents stale values from being written; the
+      // loading flag must always be cleared to avoid an infinite spinner.
+      setLoading(false);
+      if (__DEV__) console.log('[STRIKE] LOAD_END');
     }
   }, [user?.uid]);
 
@@ -233,6 +246,9 @@ export function useDomainStreaks(refreshKey = 0) {
     if (streakColdStartPendingRef.current && refreshKey === 0) return;
     void load();
   }, [refreshKey, load, user?.uid]);
+
+  // Cancel any pending safety timer on unmount
+  useEffect(() => () => clearTimeout(safetyTimerRef.current), []);
 
   /**
    * Real calendar-day rollover: when the local YYYY-MM-DD changes (e.g. user keeps the app

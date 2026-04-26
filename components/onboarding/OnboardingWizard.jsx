@@ -1201,21 +1201,27 @@ export default function OnboardingWizard() {
               accessibilityState={{ disabled, busy: saving }}
               accessibilityLabel={label}
             >
-              <View style={styles.primaryBtnInner}>
-                {saving ? (
+              {saving ? (
+                <View style={styles.primaryBtnInner}>
                   <ActivityIndicator
                     color={Colors.onPrimary}
                     style={styles.primaryBtnSpinner}
                   />
-                ) : null}
+                  <Text
+                    style={styles.primaryBtnText}
+                    allowFontScaling={false}
+                  >
+                    {label}
+                  </Text>
+                </View>
+              ) : (
                 <Text
                   style={styles.primaryBtnText}
-                  numberOfLines={1}
                   allowFontScaling={false}
                 >
                   {label}
                 </Text>
-              </View>
+              )}
             </TouchableOpacity>
           );
         })()}
@@ -1283,18 +1289,20 @@ const createStyles = (Colors) =>
       alignItems: 'center',
       gap: 12,
     },
-    cardEmoji: { fontSize: 28 },
-    cardTextCol: { flex: 1 },
+    cardEmoji: { fontSize: 28, flexShrink: 0 },
+    cardTextCol: { flex: 1, minWidth: 0 },
     cardTitle: {
       fontSize: 17,
       fontFamily: 'PlusJakartaSans-Bold',
       color: Colors.textPrimary,
+      flexShrink: 1,
     },
     cardSub: {
       fontSize: 13,
       fontFamily: 'PlusJakartaSans-Regular',
       color: Colors.textTertiary,
       marginTop: 4,
+      flexShrink: 1,
     },
     radio: {
       width: 24,
@@ -1304,6 +1312,8 @@ const createStyles = (Colors) =>
       borderColor: Colors.border,
       alignItems: 'center',
       justifyContent: 'center',
+      flexShrink: 0,
+      marginLeft: 8,
     },
     radioOn: {
       borderColor: Colors.textPrimary,
@@ -1614,7 +1624,7 @@ const createStyles = (Colors) =>
     },
     footer: {
       paddingHorizontal: 22,
-      paddingBottom: 20,
+      paddingBottom: 24,
       paddingTop: 12,
       borderTopWidth: 1,
       borderTopColor: Colors.border,
@@ -1645,18 +1655,31 @@ const createStyles = (Colors) =>
       opacity: 0.5,
     },
     primaryBtnInner: {
+      width: '100%',
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
     },
     primaryBtnSpinner: { marginRight: 10 },
+    /**
+     * Android release-build text measurement quirk: with a custom Bold font,
+     * Android sometimes measures a Text node 1–2px narrower than the glyphs
+     * actually render, which clips the trailing character ("Continue" → "Continu").
+     * Mitigations applied here:
+     *   - generous lineHeight so descenders are never vertically cropped,
+     *   - includeFontPadding kept false (correct for custom fonts),
+     *   - no flexShrink so the Text dictates its own natural width,
+     *   - the JSX above places this Text as a direct child of the centered
+     *     TouchableOpacity (when not saving), which is the safest layout for
+     *     Android release builds.
+     */
     primaryBtnText: {
       fontSize: 17,
-      lineHeight: 24,
+      lineHeight: 28,
       fontFamily: 'PlusJakartaSans-Bold',
       color: Colors.onPrimary,
       textAlign: 'center',
       textAlignVertical: 'center',
-      includeFontPadding: true,
+      includeFontPadding: false,
     },
   });

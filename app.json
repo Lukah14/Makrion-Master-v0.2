@@ -2,7 +2,7 @@
   "expo": {
     "name": "Makrion",
     "slug": "makrion",
-    "version": "1.0.1",
+    "version": "1.0.3",
     "orientation": "portrait",
     "scheme": "makrion",
     "userInterfaceStyle": "automatic",

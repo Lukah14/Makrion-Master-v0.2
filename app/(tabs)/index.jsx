@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'expo-router';
 import {
   ScrollView, View, Text, Image, TouchableOpacity, StyleSheet,
@@ -89,9 +89,23 @@ export default function HomeScreen() {
 
   const domainStreaks = useDomainStreaksContext();
 
+  // Keep a ref so the focus callback can read the current loading state without
+  // listing it as a dependency. Listing `domainStreaks.loading` as a dep was the
+  // root cause of an infinite reload loop: loading flip false→true→false each
+  // time caused useFocusEffect to re-register and immediately fire the new
+  // callback while the screen was still focused, which called reload() again.
+  const domainStreaksLoadingRef = useRef(domainStreaks.loading);
+  domainStreaksLoadingRef.current = domainStreaks.loading;
+
   useFocusEffect(
     useCallback(() => {
-      domainStreaks.reload();
+      // Only reload streaks if the initial cold-start fetch already finished;
+      // the cold-start timer inside useDomainStreaks handles the very first
+      // fetch automatically, and calling reload() concurrently would duplicate
+      // 700+ Firestore reads.
+      if (!domainStreaksLoadingRef.current) {
+        domainStreaks.reload();
+      }
       reloadHabits();
     }, [domainStreaks.reload, reloadHabits]),
   );

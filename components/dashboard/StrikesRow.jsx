@@ -1,8 +1,6 @@
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Apple, Dumbbell, ListChecks } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
-
-const ACCENT = '#E8526A';
 
 function StrikePill({ icon: Icon, value, onPress }) {
   const { colors: Colors } = useTheme();
@@ -58,26 +56,14 @@ export default function StrikesRow({
   const { colors: Colors } = useTheme();
   const s = createStyles(Colors);
 
-  if (loading) {
-    return (
-      <View style={s.wrap}>
-        <View style={s.loadingRow}>
-          <ActivityIndicator size="small" color={ACCENT} />
-        </View>
-      </View>
-    );
-  }
-
-  if (error) {
-    return (
-      <View style={s.wrap}>
-        <Text style={s.errorText} numberOfLines={2}>{error}</Text>
-      </View>
-    );
-  }
-
+  // Never block with a full spinner — streak data is non-critical.
+  // While loading, render the pills at reduced opacity so the layout is stable.
+  // An error is also non-fatal: show a brief hint and the (zero) pills below it.
   return (
-    <View style={s.wrap}>
+    <View style={[s.wrap, loading && s.wrapLoading]}>
+      {error ? (
+        <Text style={s.errorText} numberOfLines={1}>{error}</Text>
+      ) : null}
       <View style={s.row}>
         <StrikePill
           icon={Apple}
@@ -102,6 +88,9 @@ export default function StrikesRow({
 const createStyles = (Colors) => StyleSheet.create({
   wrap: {
     marginBottom: 10,
+  },
+  wrapLoading: {
+    opacity: 0.45,
   },
   row: {
     flexDirection: 'row',
@@ -133,14 +122,10 @@ const createStyles = (Colors) => StyleSheet.create({
     minWidth: 18,
     textAlign: 'right',
   },
-  loadingRow: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 6,
-  },
   errorText: {
     fontSize: 11,
     color: Colors.textTertiary,
     textAlign: 'center',
+    marginBottom: 4,
   },
 });
