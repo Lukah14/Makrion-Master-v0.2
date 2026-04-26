@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
   ScrollView, View, Text, TouchableOpacity,
-  StyleSheet, Platform, Alert, Image,
+  StyleSheet, Platform, Alert, Image, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -11,6 +11,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/context/AuthContext';
 import { useUser } from '@/hooks/useUser';
 import { useTabBarLayout } from '@/hooks/useTabBarLayout';
+import { deleteCurrentAccount } from '@/services/authService';
 import AppearanceSheet from '@/components/settings/AppearanceSheet';
 
 function SectionLabel({ label }) {
@@ -68,18 +69,52 @@ export default function SettingsScreen() {
   const styles = createStyles(Colors);
   const { scrollPaddingBottom } = useTabBarLayout();
   const [appearanceOpen, setAppearanceOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const displayName = (userData?.displayName || user?.displayName || '').trim() || 'User';
   const displayEmail = (userData?.email || user?.email || '').trim();
   const photoUrl = userData?.photoURL || user?.photoURL;
 
+  const performAccountDeletion = async () => {
+    if (deleting) return;
+    setDeleting(true);
+    try {
+      await deleteCurrentAccount();
+      try { router.replace('/(auth)/login'); } catch { /* gate will redirect on auth=null */ }
+    } catch (e) {
+      const code = e?.code || '';
+      const msg =
+        code === 'auth/requires-recent-login'
+          ? 'For security, please log out and log back in, then try deleting your account again.'
+          : code === 'auth/network-request-failed'
+            ? 'Network error. Check your connection and try again.'
+            : (e?.message || 'Could not delete your account. Please try again.');
+      if (Platform.OS === 'web') {
+        window.alert(msg);
+      } else {
+        Alert.alert('Could not delete account', msg);
+      }
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const handleDeleteAccount = () => {
+    if (deleting) return;
+    const message =
+      'This will permanently delete your account and all your data. This action cannot be undone.';
+    if (Platform.OS === 'web') {
+      if (window.confirm(`Delete Account\n\n${message}`)) {
+        void performAccountDeletion();
+      }
+      return;
+    }
     Alert.alert(
       'Delete Account',
-      'This will permanently delete your account and all your data. This action cannot be undone.',
+      message,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => {} },
+        { text: 'Delete', style: 'destructive', onPress: () => { void performAccountDeletion(); } },
       ],
     );
   };
@@ -207,9 +242,10 @@ export default function SettingsScreen() {
           <SettingsRow
             icon={<Trash2 size={16} color="#FFFFFF" />}
             iconBg="#F44336"
-            label="Delete Account"
+            label={deleting ? 'Deleting account…' : 'Delete Account'}
             subtitle="Permanently remove all your data"
-            onPress={handleDeleteAccount}
+            onPress={deleting ? undefined : handleDeleteAccount}
+            right={deleting ? <ActivityIndicator size="small" color={Colors.error} /> : undefined}
             showDivider={false}
             destructive
           />

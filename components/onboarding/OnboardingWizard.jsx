@@ -4,6 +4,7 @@ import {
   View,
   Text,
   TouchableOpacity,
+  Pressable,
   StyleSheet,
   ScrollView,
   ActivityIndicator,
@@ -759,10 +760,10 @@ export default function OnboardingWizard() {
               mainGoal === g.id,
               () => setMainGoal(g.id),
               <>
-                <Text style={styles.cardEmoji}>{g.emoji}</Text>
+                <Text style={styles.cardEmoji} allowFontScaling={false}>{g.emoji}</Text>
                 <View style={styles.cardTextCol}>
-                  <Text style={styles.cardTitle}>{g.title}</Text>
-                  <Text style={styles.cardSub}>{g.subtitle}</Text>
+                  <Text style={styles.cardTitle} allowFontScaling={false}>{g.title}</Text>
+                  <Text style={styles.cardSub} allowFontScaling={false}>{g.subtitle}</Text>
                 </View>
               </>,
             )}
@@ -893,8 +894,8 @@ export default function OnboardingWizard() {
               activityLevel === a.id,
               () => setActivityLevel(a.id),
               <View style={styles.cardTextCol}>
-                <Text style={styles.cardTitle}>{a.title}</Text>
-                <Text style={styles.cardSub}>{a.subtitle}</Text>
+                <Text style={styles.cardTitle} allowFontScaling={false}>{a.title}</Text>
+                <Text style={styles.cardSub} allowFontScaling={false}>{a.subtitle}</Text>
               </View>,
             )}
           </View>
@@ -1192,14 +1193,19 @@ export default function OnboardingWizard() {
             ? (saving ? 'Saving…' : 'Save & Continue')
             : 'Continue';
           return (
-            <TouchableOpacity
-              style={[styles.primaryBtn, saving && styles.primaryBtnSaving, disabled && !saving && styles.primaryBtnDisabled]}
+            <Pressable
+              style={({ pressed }) => [
+                styles.primaryBtn,
+                saving && styles.primaryBtnSaving,
+                disabled && !saving && styles.primaryBtnDisabled,
+                pressed && !disabled && styles.primaryBtnPressed,
+              ]}
               onPress={handleContinue}
               disabled={disabled}
-              activeOpacity={0.85}
               accessibilityRole="button"
               accessibilityState={{ disabled, busy: saving }}
               accessibilityLabel={label}
+              android_disableSound
             >
               {saving ? (
                 <View style={styles.primaryBtnInner}>
@@ -1207,6 +1213,17 @@ export default function OnboardingWizard() {
                     color={Colors.onPrimary}
                     style={styles.primaryBtnSpinner}
                   />
+                  <View style={styles.primaryBtnTextWrap}>
+                    <Text
+                      style={styles.primaryBtnText}
+                      allowFontScaling={false}
+                    >
+                      {label}
+                    </Text>
+                  </View>
+                </View>
+              ) : (
+                <View style={styles.primaryBtnTextWrap}>
                   <Text
                     style={styles.primaryBtnText}
                     allowFontScaling={false}
@@ -1214,15 +1231,8 @@ export default function OnboardingWizard() {
                     {label}
                   </Text>
                 </View>
-              ) : (
-                <Text
-                  style={styles.primaryBtnText}
-                  allowFontScaling={false}
-                >
-                  {label}
-                </Text>
               )}
-            </TouchableOpacity>
+            </Pressable>
           );
         })()}
       </View>
@@ -1289,20 +1299,26 @@ const createStyles = (Colors) =>
       alignItems: 'center',
       gap: 12,
     },
-    cardEmoji: { fontSize: 28, flexShrink: 0 },
-    cardTextCol: { flex: 1, minWidth: 0 },
+    cardEmoji: { fontSize: 28, flexShrink: 0, includeFontPadding: false },
+    cardTextCol: { flex: 1, minWidth: 0, paddingRight: 4 },
     cardTitle: {
       fontSize: 17,
+      lineHeight: 22,
+      letterSpacing: 0.1,
       fontFamily: 'PlusJakartaSans-Bold',
+      fontWeight: '700',
       color: Colors.textPrimary,
       flexShrink: 1,
+      includeFontPadding: false,
     },
     cardSub: {
       fontSize: 13,
+      lineHeight: 18,
       fontFamily: 'PlusJakartaSans-Regular',
       color: Colors.textTertiary,
       marginTop: 4,
       flexShrink: 1,
+      includeFontPadding: false,
     },
     radio: {
       width: 24,
@@ -1630,20 +1646,26 @@ const createStyles = (Colors) =>
       borderTopColor: Colors.border,
     },
     /**
-     * Tall enough on Android release builds that the TextView can render the
-     * full bold glyph + descenders without clipping. We deliberately do not use
-     * `alignItems: 'stretch'` here — stretching the inner row to the button's
-     * minHeight forces Android to compress the Text node and chops the label
-     * vertically once a custom font is loaded.
+     * Bottom CTA button. Spans full footer width so the inner Text always has
+     * the maximum possible horizontal canvas. Tall enough that Android release
+     * builds can render the full bold glyph + descenders without clipping.
+     * We deliberately do not use `alignItems: 'stretch'` — stretching the
+     * inner row to the button's minHeight forces Android to compress the Text
+     * node and chops the label vertically once a custom font is loaded.
      */
     primaryBtn: {
+      width: '100%',
       backgroundColor: Colors.textPrimary,
       borderRadius: 16,
       paddingVertical: 18,
-      paddingHorizontal: 24,
+      paddingHorizontal: 28,
       alignItems: 'center',
       justifyContent: 'center',
       minHeight: 60,
+      overflow: 'visible',
+    },
+    primaryBtnPressed: {
+      opacity: 0.85,
     },
     /** Do not dim the whole button (opacity hid label + looked “broken” with spinner-only). */
     primaryBtnSaving: {
@@ -1655,12 +1677,22 @@ const createStyles = (Colors) =>
       opacity: 0.5,
     },
     primaryBtnInner: {
-      width: '100%',
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
+      overflow: 'visible',
     },
     primaryBtnSpinner: { marginRight: 10 },
+    /**
+     * Inner wrapper around the Text. Adds guaranteed horizontal buffer so even
+     * if Android's release-mode TextPaint mis-measures the bold glyph by 1–2px,
+     * the Text still has room to render the trailing character. The wrapper
+     * sizes to its content; the buffer comes from `paddingHorizontal`.
+     */
+    primaryBtnTextWrap: {
+      paddingHorizontal: 12,
+      overflow: 'visible',
+    },
     /**
      * Android release-build text-measurement quirk: with a custom Bold font
      * (PlusJakartaSans-Bold via @expo-google-fonts), Android's TextPaint in
@@ -1673,24 +1705,30 @@ const createStyles = (Colors) =>
      *   1. `letterSpacing: 0.1` — non-zero letter spacing forces Android into
      *      a different TextPaint measurement code path that does NOT have the
      *      truncation bug. This is the canonical industry-proven fix.
-     *   2. `paddingHorizontal: 4` on the Text itself — internal buffer so even
-     *      a wrong measurement still has room to render the last glyph.
+     *   2. `paddingHorizontal: 6` on the Text itself + 12 on the wrapper View
+     *      = 18px guaranteed buffer on each side of the glyphs.
      *   3. `lineHeight: 28` + `includeFontPadding: false` — descenders can
      *      never be cropped vertically.
-     *   4. No `flexShrink` — the Text dictates its own natural width.
-     *   5. JSX places this Text as a direct child of the centered
-     *      TouchableOpacity when no spinner is shown, eliminating the
-     *      flex-row measurement chain entirely.
+     *   4. No `flexShrink` anywhere — Text dictates its own natural width.
+     *   5. `fontWeight: '700'` alongside `fontFamily` — gives Android a
+     *      fallback weight so the system can pick a non-buggy measurement
+     *      path if the custom font path fails.
+     *   6. `allowFontScaling={false}` — prevents the OS font-scale setting
+     *      from triggering a different (buggy) measurement code path.
+     *   7. `overflow: 'visible'` on every ancestor — guarantees that if any
+     *      wrapper accidentally underestimates width, the glyph is still
+     *      drawn rather than clipped.
      */
     primaryBtnText: {
       fontSize: 17,
       lineHeight: 28,
       letterSpacing: 0.1,
       fontFamily: 'PlusJakartaSans-Bold',
+      fontWeight: '700',
       color: Colors.onPrimary,
       textAlign: 'center',
       textAlignVertical: 'center',
       includeFontPadding: false,
-      paddingHorizontal: 4,
+      paddingHorizontal: 6,
     },
   });

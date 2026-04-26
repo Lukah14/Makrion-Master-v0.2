@@ -7,8 +7,10 @@ import {
   onAuthStateChanged,
   GoogleAuthProvider,
   signInWithCredential,
+  deleteUser,
 } from 'firebase/auth';
-import { auth } from '@/lib/firebase';
+import { doc, deleteDoc } from 'firebase/firestore';
+import { auth, db } from '@/lib/firebase';
 import { createUserDocument, ensureUserDocument, ensureGoogleUserDocument } from './userService';
 
 export async function signUp(email, password, displayName) {
@@ -74,4 +76,53 @@ export async function signInWithGoogleIdToken(idToken) {
 
 export function onAuthChange(callback) {
   return onAuthStateChanged(auth, callback);
+}
+
+/**
+ * Permanently delete the currently signed-in user.
+ *
+ * Order of operations:
+ *   1. Best-effort delete of `users/{uid}` and `profiles/{uid}` Firestore docs
+ *      while the user is still authenticated. Subcollection cleanup (food logs,
+ *      habit completions, etc.) is left to a backend Cloud Function (or stays
+ *      orphaned in this client-only build); the visible profile is removed.
+ *   2. Call Firebase Auth `deleteUser(currentUser)`. Firebase throws
+ *      `auth/requires-recent-login` if the user has not signed in recently —
+ *      callers should detect this code and ask the user to log out and back in.
+ *   3. After successful deletion, the `onAuthStateChanged` listener in
+ *      AuthContext fires with `user === null`, which tears down listeners and
+ *      drives navigation to the login screen.
+ *
+ * @throws {Error & { code?: string }} Re-throws Firebase Auth errors with their
+ * original `code` (e.g. `auth/requires-recent-login`) so the UI can branch.
+ */
+export async function deleteCurrentAccount() {
+  const currentUser = auth.currentUser;
+  if (!currentUser) {
+    const err = new Error('No signed-in user to delete.');
+    err.code = 'auth/no-current-user';
+    throw err;
+  }
+  const uid = currentUser.uid;
+
+  try {
+    await deleteDoc(doc(db, 'users', uid));
+  } catch (e) {
+    if (__DEV__) {
+      console.warn('[AUTH] deleteCurrentAccount: users/{uid} delete failed (non-fatal)', e?.message || e);
+    }
+  }
+  try {
+    await deleteDoc(doc(db, 'profiles', uid));
+  } catch (e) {
+    if (__DEV__) {
+      console.warn('[AUTH] deleteCurrentAccount: profiles/{uid} delete failed (non-fatal)', e?.message || e);
+    }
+  }
+
+  await deleteUser(currentUser);
+
+  if (__DEV__) {
+    console.log('[AUTH] deleteCurrentAccount: auth user deleted', { uid: uid.slice(0, 8) });
+  }
 }
